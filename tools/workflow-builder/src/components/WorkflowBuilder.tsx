@@ -228,7 +228,9 @@ function TriggerOption({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-1 w-5 h-5 rounded border-dark-600 bg-dark-700 text-claude-600 focus:ring-claude-500/30"
+        className="mt-1 w-5 h-5 rounded border-dark-600 bg-dark-700 text-claude-600
+                   focus:ring-2 focus:ring-claude-500/30 focus:ring-offset-0
+                   checked:bg-claude-600 checked:border-claude-600"
       />
       <div className="flex-1">
         <div className="flex items-center gap-2 text-white font-medium">

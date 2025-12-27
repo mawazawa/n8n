@@ -1,6 +1,36 @@
-# CLAUDE.md - AI Assistant Guide for n8n
+# GEMINI.md - AI Assistant Guide for n8n
 
-This document provides essential context for AI assistants working on the n8n codebase.
+> **Optimized for Gemini's 1M+ token context window**
+> Today's Date: Check system date - this matters for temporal reasoning
+
+This document provides essential context for Gemini AI assistants working on the n8n codebase. Leverage your extended context window to maintain comprehensive awareness across the entire codebase.
+
+---
+
+## Context Window Strategy
+
+**You have 1,000,000+ tokens of context.** Use this strategically:
+
+1. **Load full file contents** rather than snippets when analyzing
+2. **Keep entire TODO.md, ROADMAP.md, and CHANGELOG in context** for coherent planning
+3. **Reference multiple related files simultaneously** for cross-cutting changes
+4. **Maintain conversation history** for complex multi-step tasks
+5. **Include test files alongside implementation** for verification
+
+### Recommended Context Loading Order
+
+```
+1. GEMINI.md (this file)
+2. ROADMAP.md (strategic vision)
+3. TODO.md (all atomic subtasks)
+4. AI_CHANGELOG.md (recent progress)
+5. Relevant package.json files
+6. Source files for current task
+7. Related test files
+8. Documentation files
+```
+
+---
 
 ## Project Overview
 
@@ -82,13 +112,6 @@ pnpm format           # Format code (Biome + Prettier)
 pnpm typecheck        # Run TypeScript type checking
 ```
 
-### Package-specific Commands
-Run commands in specific packages:
-```bash
-cd packages/cli && pnpm test     # Run CLI tests
-cd packages/nodes-base && pnpm lint  # Lint nodes
-```
-
 ## Technology Stack
 
 ### Backend
@@ -125,112 +148,17 @@ Follow Angular commit convention:
 
 **Scopes**: `API`, `benchmark`, `core`, `editor`, `* Node` (e.g., "Slack Node")
 
-**Examples**:
-- `feat(editor): Add dark mode toggle`
-- `fix(Slack Node): Handle rate limiting correctly`
-- `refactor(core): Simplify workflow execution`
-
-Append `(no-changelog)` for changes that shouldn't appear in changelog.
-
 ### TypeScript Guidelines
 - Do NOT use `ts-ignore`
 - Strict TypeScript compliance required
 - Use proper typing, avoid `any`
 - Reuse existing types from `n8n-workflow` package
 
-### Node Development
-Nodes live in `packages/nodes-base/nodes/` with this structure:
-```
-nodes/
-└── ServiceName/
-    ├── ServiceName.node.ts    # Main node (or versioned wrapper)
-    ├── V1/                    # Version 1 implementation
-    ├── V2/                    # Version 2 implementation
-    ├── GenericFunctions.ts    # API helpers
-    ├── serviceName.svg        # Icon
-    └── test/                  # Node tests
-```
-
-Credentials go in `packages/nodes-base/credentials/`.
-
-### Testing Requirements
-All PRs must include tests:
-- **Unit tests**: For logic and utilities
-- **Workflow tests**: For nodes (see `nodes/Switch/V3/test/` for example)
-- **UI tests**: For frontend changes (Vitest + Vue Test Utils)
-
 ### File Naming
 - Node files: `PascalCase.node.ts`
 - Credential files: `PascalCase.credentials.ts`
 - Test files: `*.test.ts` or `*.spec.ts`
 - Vue components: `PascalCase.vue`
-
-## Important Files
-
-- `packages/cli/BREAKING-CHANGES.md` - Document breaking changes here
-- `packages/cli/src/commands/` - CLI command implementations
-- `packages/workflow/src/` - Core workflow types and interfaces
-- `packages/nodes-base/nodes/` - All built-in nodes
-- `packages/frontend/editor-ui/src/` - Main frontend application
-
-## Database Support
-
-The CLI supports multiple databases:
-- **SQLite**: Default, file-based
-- **PostgreSQL**: Production recommended
-- **MySQL/MariaDB**: Supported
-
-Run tests against specific databases:
-```bash
-pnpm test:sqlite   # Default
-pnpm test:postgres
-pnpm test:mysql
-pnpm test:mariadb
-```
-
-## Environment Variables
-
-Key development environment variables:
-- `N8N_DEV_RELOAD=true` - Enable hot reload for nodes
-- `N8N_LOG_LEVEL` - Logging level (debug, info, warn, error)
-- `DB_TYPE` - Database type (sqlite, postgresdb, mysqldb, mariadb)
-- `COVERAGE_ENABLED=true` - Enable test coverage
-
-## Common Tasks
-
-### Adding a New Node
-1. Create directory in `packages/nodes-base/nodes/YourNode/`
-2. Implement node class extending `INodeType`
-3. Add credentials in `packages/nodes-base/credentials/`
-4. Register in `packages/nodes-base/package.json` under `n8n.nodes` and `n8n.credentials`
-5. Add workflow tests
-
-### Modifying the Frontend
-1. Run `pnpm dev:fe` for hot reloading
-2. Components are in `packages/frontend/editor-ui/src/components/`
-3. Use design system components from `@n8n/design-system`
-4. State management via Pinia stores in `@n8n/stores`
-
-### Backend API Changes
-1. API routes are in `packages/cli/src/controllers/`
-2. API types go in `packages/@n8n/api-types/`
-3. Update OpenAPI spec if applicable
-
-## Warnings
-
-- **Core Package**: Contact n8n team before making changes to `packages/core/`
-- **New Nodes**: PRs adding new nodes are auto-closed unless requested by n8n team
-- **Typo-only PRs**: Will be rejected
-- **Security**: Be aware of XSS, SQL injection, command injection risks
-- **Breaking Changes**: Must be documented in `packages/cli/BREAKING-CHANGES.md`
-
-## Resources
-
-- [Documentation](https://docs.n8n.io)
-- [Creating Nodes Guide](https://docs.n8n.io/integrations/creating-nodes/)
-- [Community Forum](https://community.n8n.io)
-- [Contributing Guide](./CONTRIBUTING.md)
-- [PR Title Conventions](.github/pull_request_title_conventions.md)
 
 ---
 
@@ -264,42 +192,48 @@ Each subtask in `TODO.md` must have:
 
 **NEVER rely on training data for solutions.** AI and tooling evolve daily. Before implementing any solution:
 
-1. **Search the web** for current (2025) best practices
+1. **Search the web** for current best practices (include today's year in search)
 2. **Check official documentation** for latest API/syntax
 3. **Verify package versions** are current
 4. **Look for breaking changes** in recent releases
 5. **Consider alternatives** that may have emerged
 
-Example search queries:
-- `"[technology] best practices 2025"`
-- `"[package] migration guide latest"`
-- `"[problem] solution December 2025"`
+### Rule 4: Temporal Awareness - DATE MATTERS
 
-### Rule 4: Changelog Discipline
+> **IMPORTANT FOR GEMINI**: Always check the current date before making decisions.
+
+- **Today's date** should inform your search queries
+- Include the **current year** in all web searches
+- Be aware that your training data may be **outdated**
+- Verify solutions against **current** documentation
+- Note when package versions have changed since training
+
+**Example search patterns:**
+```
+"Vitest migration best practices 2025"
+"Vue 3 Module Federation December 2025"
+"Zod TypeScript inference latest"
+```
+
+### Rule 5: Changelog Discipline
 
 After completing **every** tested action, immediately update `AI_CHANGELOG.md`:
 
 ```markdown
-| YYYY-MM-DD HH:MM | Completed [TODO.md ID]: [Description] | [Agent Name] | ✅ |
+| YYYY-MM-DD HH:MM | Completed [TODO.md ID]: [Description] | Gemini | ✅ |
 ```
 
-Include:
-- Exact UTC timestamp
-- Reference to TODO.md task ID
-- Brief description of what was done
-- Verification that tests pass
+### Rule 6: Leverage Your Context Window
 
-### Rule 5: Next Actions Determination
+**Gemini-specific guidance for 1M+ context:**
 
-At the end of each work session, the agent must:
+1. **Load holistically**: Read entire files, not just snippets
+2. **Cross-reference**: Keep multiple related files in context simultaneously
+3. **Pattern recognition**: Use your context to identify patterns across the codebase
+4. **Coherent changes**: Make consistent changes across many files at once
+5. **Full test coverage**: Include both implementation and test files in context
 
-1. **Review remaining tasks** in TODO.md
-2. **Identify next 10 highest-leverage actions** (or fewer if near completion)
-3. **Break down new actions** into atomic subtasks if needed
-4. **Update TODO.md** with any new subtasks discovered
-5. **Update ROADMAP.md** if strategic priorities shift
-
-### Rule 6: Success Criteria via Web Research
+### Rule 7: Success Criteria via Web Research
 
 Success criteria must be determined through web research, not assumed:
 
@@ -309,7 +243,7 @@ Success criteria must be determined through web research, not assumed:
          coverage >80% per 2025 Vitest best practices"
 ```
 
-### Rule 7: File Documentation Links
+### Rule 8: File Documentation Links
 
 Key files for AI agents:
 
@@ -318,10 +252,10 @@ Key files for AI agents:
 | `ROADMAP.md` | Strategic vision and phase planning |
 | `TODO.md` | Atomic subtasks with success criteria |
 | `AI_CHANGELOG.md` | AI agent progress tracking |
-| `CLAUDE.md` | This file - Claude-specific guidance |
-| `GEMINI.md` | Gemini-specific guidance |
+| `CLAUDE.md` | Claude-specific guidance |
+| `GEMINI.md` | This file - Gemini-specific guidance |
 
-### Rule 8: Scope Discipline
+### Rule 9: Scope Discipline
 
 Never exceed 5 files per subtask. If a task requires more:
 
@@ -330,7 +264,7 @@ Never exceed 5 files per subtask. If a task requires more:
 3. **Document the split** in TODO.md
 4. **Update progress tracking** accordingly
 
-### Rule 9: Verification Before Completion
+### Rule 10: Verification Before Completion
 
 Before marking any task ✅ Complete:
 
@@ -340,15 +274,39 @@ Before marking any task ✅ Complete:
 4. Update AI_CHANGELOG.md with timestamp
 5. Determine next high-leverage actions
 
-### Rule 10: Temporal Awareness
+---
 
-**Today's date matters.** When searching for solutions:
+## Gemini-Specific Optimizations
 
-- Include the current year (2025) in searches
-- Check package release dates
-- Verify documentation is current
-- Be aware of deprecations and migrations
-- Note when information may be outdated
+### Using Your Extended Context
+
+With 1M+ tokens, you can:
+
+1. **Analyze entire packages** at once for refactoring
+2. **Compare all node implementations** to find patterns
+3. **Review full test suites** for consistency
+4. **Track complex dependencies** across the monorepo
+5. **Maintain full conversation history** for multi-step tasks
+
+### Recommended Workflows
+
+**For Package Migration (e.g., Jest→Vitest):**
+```
+1. Load: jest.config.js + all *.test.ts files in package
+2. Load: Vitest migration guide from web search
+3. Transform all files with consistent patterns
+4. Verify with test run
+5. Update TODO.md and AI_CHANGELOG.md
+```
+
+**For Cross-Cutting Changes (e.g., Zod adoption):**
+```
+1. Load: All node definition files (patterns)
+2. Load: Target node + related test files
+3. Load: Zod schemas from workflow package
+4. Implement with type inference
+5. Verify types + runtime behavior
+```
 
 ---
 
@@ -369,5 +327,16 @@ Before marking any task ✅ Complete:
 
 ---
 
+## Resources
+
+- [Documentation](https://docs.n8n.io)
+- [Creating Nodes Guide](https://docs.n8n.io/integrations/creating-nodes/)
+- [Community Forum](https://community.n8n.io)
+- [Contributing Guide](./CONTRIBUTING.md)
+- [PR Title Conventions](.github/pull_request_title_conventions.md)
+
+---
+
 *Last Updated: 2025-12-27*
 *This document is maintained by AI agents and human reviewers.*
+*Optimized for Gemini's 1M+ token context window.*
