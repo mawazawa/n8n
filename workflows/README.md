@@ -2,6 +2,16 @@
 
 Production-ready n8n 2.0 workflow templates implementing the highest leverage automation patterns.
 
+## Workflow Library Overview
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| **Core Templates** | 4 | Original high-leverage workflow patterns |
+| **Community Verified** | 16 | Curated from top community repositories |
+| **Total** | 20 | Ready-to-import workflows |
+
+See also: [Community Workflows](./community/README.md)
+
 ## Quick Start
 
 ### 1. Import Workflows
