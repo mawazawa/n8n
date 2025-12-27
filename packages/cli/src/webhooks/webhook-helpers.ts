@@ -2,12 +2,12 @@
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable id-denylist */
-/* eslint-disable prefer-spread */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
 import { Logger } from '@n8n/backend-common';
 import { GlobalConfig } from '@n8n/config';
 import type { Project } from '@n8n/db';
+import { ExecutionRepository } from '@n8n/db';
 import { Container } from '@n8n/di';
 import type express from 'express';
 import { BinaryDataService, ErrorReporter } from 'n8n-core';
@@ -30,16 +30,21 @@ import type {
 	IWorkflowExecutionDataProcess,
 	IWorkflowBase,
 	WebhookResponseData,
+	IDestinationNode,
 } from 'n8n-workflow';
 import {
+	CHAT_TRIGGER_NODE_TYPE,
 	createDeferredPromise,
+	createRunExecutionData,
 	ExecutionCancelledError,
 	FORM_NODE_TYPE,
 	FORM_TRIGGER_NODE_TYPE,
 	NodeOperationError,
 	OperationalError,
+	tryToParseUrl,
 	UnexpectedError,
 	WAIT_NODE_TYPE,
+	WorkflowConfigurationError,
 } from 'n8n-workflow';
 import { finished } from 'stream/promises';
 
@@ -63,11 +68,27 @@ import { WaitTracker } from '@/wait-tracker';
 import { WebhookExecutionContext } from '@/webhooks/webhook-execution-context';
 import { createMultiFormDataParser } from '@/webhooks/webhook-form-data';
 import { extractWebhookLastNodeResponse } from '@/webhooks/webhook-last-node-response-extractor';
+import { extractWebhookOnReceivedResponse } from '@/webhooks/webhook-on-received-response-extractor';
 import type { WebhookResponse } from '@/webhooks/webhook-response';
 import { createStaticResponse, createStreamResponse } from '@/webhooks/webhook-response';
 import * as WorkflowExecuteAdditionalData from '@/workflow-execute-additional-data';
 import * as WorkflowHelpers from '@/workflow-helpers';
 import { WorkflowRunner } from '@/workflow-runner';
+
+export function handleHostedChatResponse(
+	res: express.Response,
+	responseMode: WebhookResponseMode,
+	didSendResponse: boolean,
+	executionId: string,
+): boolean {
+	if (responseMode === 'hostedChat' && !didSendResponse) {
+		res.send({ executionStarted: true, executionId });
+		process.nextTick(() => res.end());
+		return true;
+	}
+
+	return didSendResponse;
+}
 
 /**
  * Returns all the webhooks which should be created for the given workflow
@@ -75,7 +96,7 @@ import { WorkflowRunner } from '@/workflow-runner';
 export function getWorkflowWebhooks(
 	workflow: Workflow,
 	additionalData: IWorkflowExecuteAdditionalData,
-	destinationNode?: string,
+	destinationNode?: IDestinationNode,
 	ignoreRestartWebhooks = false,
 ): IWebhookData[] {
 	// Check all the nodes in the workflow if they have webhooks
@@ -84,9 +105,11 @@ export function getWorkflowWebhooks(
 
 	let parentNodes: string[] | undefined;
 	if (destinationNode !== undefined) {
-		parentNodes = workflow.getParentNodes(destinationNode);
+		parentNodes = workflow.getParentNodes(destinationNode.nodeName);
 		// Also add the destination node in case it itself is a webhook node
-		parentNodes.push(destinationNode);
+		if (destinationNode.mode === 'inclusive') {
+			parentNodes.push(destinationNode.nodeName);
+		}
 	}
 
 	for (const node of Object.values(workflow.nodes)) {
@@ -110,6 +133,23 @@ export function getWorkflowWebhooks(
 	return returnData;
 }
 
+const getChatResponseMode = (workflowStartNode: INode, method: string) => {
+	const parameters = workflowStartNode.parameters as {
+		public: boolean;
+		options?: { responseMode: string };
+	};
+
+	if (workflowStartNode.type !== CHAT_TRIGGER_NODE_TYPE) return undefined;
+
+	if (method === 'GET') return 'onReceived';
+
+	if (method === 'POST' && parameters.options?.responseMode === 'responseNodes') {
+		return 'hostedChat';
+	}
+
+	return undefined;
+};
+
 // eslint-disable-next-line complexity
 export function autoDetectResponseMode(
 	workflowStartNode: INode,
@@ -131,6 +171,9 @@ export function autoDetectResponseMode(
 			}
 		}
 	}
+
+	const chatResponseMode = getChatResponseMode(workflowStartNode, method);
+	if (chatResponseMode) return chatResponseMode;
 
 	// If there are form nodes connected to a current form node we're dealing with a multipage form
 	// and we need to return the formPage response mode when a second page of the form gets submitted
@@ -192,10 +235,20 @@ export const handleFormRedirectionCase = (
 		(data?.headers as IDataObject)?.location &&
 		String(data?.responseCode).startsWith('3')
 	) {
+		const locationUrl = String((data?.headers as IDataObject)?.location);
+		let validatedUrl: string | undefined;
+		try {
+			validatedUrl = tryToParseUrl(locationUrl);
+		} catch {
+			// Invalid URL, don't redirect
+		}
+
 		data.responseCode = 200;
-		data.data = {
-			redirectURL: (data?.headers as IDataObject)?.location,
-		};
+		if (validatedUrl) {
+			data.data = {
+				redirectURL: validatedUrl,
+			};
+		}
 		(data.headers as IDataObject).location = undefined;
 	}
 
@@ -204,28 +257,6 @@ export const handleFormRedirectionCase = (
 
 const { formDataFileSizeMax } = Container.get(GlobalConfig).endpoints;
 const parseFormData = createMultiFormDataParser(formDataFileSizeMax);
-
-/** Return webhook response when responseMode is set to "onReceived" */
-export function getResponseOnReceived(
-	responseData: WebhookResponseData | string | undefined,
-	webhookResultData: IWebhookResponseData,
-	responseCode: number,
-): IWebhookResponseCallbackData {
-	const callbackData: IWebhookResponseCallbackData = { responseCode };
-	// Return response directly and do not wait for the workflow to finish
-	if (responseData === 'noData') {
-		// Return without data
-	} else if (responseData) {
-		// Return the data specified in the response data option
-		callbackData.data = responseData as unknown as IDataObject;
-	} else if (webhookResultData.webhookResponse !== undefined) {
-		// Data to respond with is given
-		callbackData.data = webhookResultData.webhookResponse;
-	} else {
-		callbackData.data = { message: 'Workflow was started' };
-	}
-	return callbackData;
-}
 
 export function setupResponseNodePromise(
 	responsePromise: IDeferredPromise<IN8nHttpFullResponse>,
@@ -281,7 +312,7 @@ export function prepareExecutionData(
 	webhookResultData: IWebhookResponseData,
 	runExecutionData: IRunExecutionData | undefined,
 	runExecutionDataMerge: object = {},
-	destinationNode?: string,
+	destinationNode?: IDestinationNode,
 	executionId?: string,
 	workflowData?: IWorkflowBase,
 ): { runExecutionData: IRunExecutionData; pinData: IPinData | undefined } {
@@ -296,17 +327,11 @@ export function prepareExecutionData(
 		},
 	];
 
-	runExecutionData ??= {
-		startData: {},
-		resultData: {
-			runData: {},
-		},
+	runExecutionData ??= createRunExecutionData({
 		executionData: {
-			contextData: {},
 			nodeExecutionStack,
-			waitingExecution: {},
 		},
-	} as IRunExecutionData;
+	});
 
 	if (destinationNode && runExecutionData.startData) {
 		runExecutionData.startData.destinationNode = destinationNode;
@@ -353,7 +378,7 @@ export async function executeWebhook(
 		error: Error | null,
 		data: IWebhookResponseCallbackData | WebhookResponse,
 	) => void,
-	destinationNode?: string,
+	destinationNode?: IDestinationNode,
 ): Promise<string | undefined> {
 	// Get the nodeType to know which responseMode is set
 	const nodeType = workflow.nodeTypes.getByNameAndVersion(
@@ -381,13 +406,15 @@ export async function executeWebhook(
 	}
 
 	// Prepare everything that is needed to run the workflow
-	const additionalData = await WorkflowExecuteAdditionalData.getBase();
+	const additionalData = await WorkflowExecuteAdditionalData.getBase({
+		projectId: project?.id,
+	});
 
 	if (executionId) {
 		additionalData.executionId = executionId;
 	}
 
-	const { responseMode, responseCode, responseData } = evaluateResponseOptions(
+	const { responseMode, responseCode, responseData, checkAllMainOutputs } = evaluateResponseOptions(
 		workflowStartNode,
 		workflow,
 		req,
@@ -396,7 +423,11 @@ export async function executeWebhook(
 		additionalKeys,
 	);
 
-	if (!['onReceived', 'lastNode', 'responseNode', 'formPage', 'streaming'].includes(responseMode)) {
+	if (
+		!['onReceived', 'lastNode', 'responseNode', 'formPage', 'streaming', 'hostedChat'].includes(
+			responseMode,
+		)
+	) {
 		// If the mode is not known we error. Is probably best like that instead of using
 		// the default that people know as early as possible (probably already testing phase)
 		// that something does not resolve properly.
@@ -430,18 +461,12 @@ export async function executeWebhook(
 				source: null,
 			});
 			runExecutionData =
-				runExecutionData ||
-				({
-					startData: {},
-					resultData: {
-						runData: {},
-					},
+				runExecutionData ??
+				createRunExecutionData({
 					executionData: {
-						contextData: {},
 						nodeExecutionStack,
-						waitingExecution: {},
 					},
-				} as IRunExecutionData);
+				});
 		}
 
 		try {
@@ -462,12 +487,7 @@ export async function executeWebhook(
 			const webhookType = ['formTrigger', 'form'].includes(nodeType.description.name)
 				? 'Form'
 				: 'Webhook';
-			let errorMessage = `Workflow ${webhookType} Error: Workflow could not be started!`;
-
-			// if workflow started manually, show an actual error message
-			if (err instanceof NodeOperationError && err.type === 'manual-form-test') {
-				errorMessage = err.message;
-			}
+			const errorMessage = _privateGetWebhookErrorMessage(err, webhookType);
 
 			Container.get(ErrorReporter).error(err, {
 				extra: {
@@ -549,8 +569,9 @@ export async function executeWebhook(
 		// Now that we know that the workflow should run we can return the default response
 		// directly if responseMode it set to "onReceived" and a response should be sent
 		if (responseMode === 'onReceived' && !didSendResponse) {
-			const callbackData = getResponseOnReceived(responseData, webhookResultData, responseCode);
-			responseCallback(null, callbackData);
+			const responseBody = extractWebhookOnReceivedResponse(responseData, webhookResultData);
+			const webhookResponse = createStaticResponse(responseBody, responseCode, responseHeaders);
+			responseCallback(null, webhookResponse);
 			didSendResponse = true;
 		}
 
@@ -620,6 +641,8 @@ export async function executeWebhook(
 			didSendResponse = true;
 		}
 
+		didSendResponse = handleHostedChatResponse(res, responseMode, didSendResponse, executionId);
+
 		Container.get(Logger).debug(
 			`Started execution of workflow "${workflow.name}" from webhook with execution ID ${executionId}`,
 			{ executionId },
@@ -631,12 +654,26 @@ export async function executeWebhook(
 		const executePromise = activeExecutions.getPostExecutePromise(executionId);
 
 		const { parentExecution } = runExecutionData;
-		if (parentExecution) {
+		if (WorkflowHelpers.shouldRestartParentExecution(parentExecution)) {
 			// on child execution completion, resume parent execution
-			void executePromise.then(() => {
-				const waitTracker = Container.get(WaitTracker);
-				void waitTracker.startExecution(parentExecution.executionId);
-			});
+			const executionRepository = Container.get(ExecutionRepository);
+			void executePromise
+				.then(async (subworkflowResults) => {
+					if (!subworkflowResults) return;
+					if (subworkflowResults.status === 'waiting') return; // The child execution is waiting, not completing.
+					await WorkflowHelpers.updateParentExecutionWithChildResults(
+						executionRepository,
+						parentExecution.executionId,
+						subworkflowResults,
+					);
+					return subworkflowResults;
+				})
+				.then((subworkflowResults) => {
+					if (!subworkflowResults) return;
+					if (subworkflowResults.status === 'waiting') return; // The child execution is waiting, not completing.
+					const waitTracker = Container.get(WaitTracker);
+					void waitTracker.startExecution(parentExecution.executionId);
+				});
 		}
 
 		if (!didSendResponse) {
@@ -701,7 +738,9 @@ export async function executeWebhook(
 						context,
 						responseData as WebhookResponseData,
 						lastNodeTaskData,
+						checkAllMainOutputs,
 					);
+
 					if (!result.ok) {
 						responseCallback(result.error, {});
 						didSendResponse = true;
@@ -796,7 +835,12 @@ function evaluateResponseOptions(
 		'firstEntryJson',
 	) as WebhookResponseData | string | undefined;
 
-	return { responseMode, responseCode, responseData };
+	// This is needed for backward compatibility, where only the first main output was checked for data.
+	// We want to keep existing behavior for webhooks, but change for chat triggers, where checking all main outputs makes more sense.
+	// We can unify the behavior in the next major release and get rid of this flag
+	const checkAllMainOutputs = workflowStartNode.type === CHAT_TRIGGER_NODE_TYPE;
+
+	return { responseMode, responseCode, responseData, checkAllMainOutputs };
 }
 
 /**
@@ -874,4 +918,26 @@ function evaluateResponseHeaders(context: WebhookExecutionContext): WebhookRespo
 	}
 
 	return headers;
+}
+
+/**
+ * Either return the original message, or a generic one if we don't want to surface the underlying cause.
+ *
+ * ONLY EXPORTED FOR TESTING.
+ *
+ * @param err the error being handled
+ */
+export function _privateGetWebhookErrorMessage(
+	err: unknown,
+	webhookType: 'Form' | 'Webhook',
+): string {
+	// if workflow started manually, show an actual error message
+	if (err instanceof NodeOperationError && err.type === 'manual-form-test') {
+		return err.message;
+	}
+	// if the error relates to a configuration error on the workflow, surface it
+	if (err instanceof WorkflowConfigurationError) {
+		return err.message;
+	}
+	return `Workflow ${webhookType} Error: Workflow could not be started!`;
 }
