@@ -2,14 +2,23 @@
 
 This document provides essential context for AI assistants working on the n8n codebase.
 
+## AI Assistant Guidelines
+
+When working on this codebase, AI assistants should:
+
+- **Prefer small, focused changes**: Make minimal modifications to accomplish the task. Avoid refactoring unrelated code.
+- **Avoid sensitive packages**: Do not modify `packages/core/` without explicit approval from the n8n team.
+- **Surface uncertainties**: If unsure about architectural decisions or conventions, ask clarifying questions rather than guessing.
+- **Run tests before committing**: Always run `pnpm test` for affected packages to catch regressions.
+- **Follow existing patterns**: Match the code style and patterns already present in the file or package you're modifying.
+- **Reference canonical docs**: For detailed contributor guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 ## Project Overview
 
 n8n is a workflow automation platform that combines no-code visual workflow building with the flexibility of writing code. It features 400+ integrations, native AI/LangChain capabilities, and is distributed under a fair-code license.
 
-- **Version**: 1.103.0 (monorepo)
 - **License**: Sustainable Use License / n8n Enterprise License
-- **Node.js**: >=22.16
-- **Package Manager**: pnpm >=10.2.1 (use corepack)
+- **Requirements**: See `engines` field in root `package.json` for current Node.js and pnpm version requirements
 
 ## Repository Structure
 
@@ -92,8 +101,8 @@ cd packages/nodes-base && pnpm lint  # Lint nodes
 ## Technology Stack
 
 ### Backend
-- **Runtime**: Node.js 22+
-- **Framework**: Express 5
+- **Runtime**: Node.js (see `package.json` for version)
+- **Framework**: Express
 - **Database**: SQLite (default), PostgreSQL, MySQL/MariaDB
 - **ORM**: TypeORM (forked as @n8n/typeorm)
 - **Queue**: Bull (Redis-based)
@@ -108,27 +117,20 @@ cd packages/nodes-base && pnpm lint  # Lint nodes
 - **i18n**: vue-i18n
 
 ### Shared
-- **Language**: TypeScript 5.8+
+- **Language**: TypeScript (strict mode)
 - **Monorepo**: pnpm workspaces + Turborepo
-- **Linting**: ESLint 9 (flat config)
+- **Linting**: ESLint (flat config)
 - **Formatting**: Biome + Prettier (frontend)
 
 ## Code Conventions
 
 ### PR Title Format
-Follow Angular commit convention:
+
+Follow Angular commit convention. See [PR Title Conventions](.github/pull_request_title_conventions.md) for full details.
+
 ```
 <type>(<scope>): <summary>
 ```
-
-**Types**: `feat`, `fix`, `perf`, `test`, `docs`, `refactor`, `build`, `ci`, `chore`
-
-**Scopes**: `API`, `benchmark`, `core`, `editor`, `* Node` (e.g., "Slack Node")
-
-**Examples**:
-- `feat(editor): Add dark mode toggle`
-- `fix(Slack Node): Handle rate limiting correctly`
-- `refactor(core): Simplify workflow execution`
 
 Append `(no-changelog)` for changes that shouldn't appear in changelog.
 
@@ -139,25 +141,14 @@ Append `(no-changelog)` for changes that shouldn't appear in changelog.
 - Reuse existing types from `n8n-workflow` package
 
 ### Node Development
-Nodes live in `packages/nodes-base/nodes/` with this structure:
-```
-nodes/
-└── ServiceName/
-    ├── ServiceName.node.ts    # Main node (or versioned wrapper)
-    ├── V1/                    # Version 1 implementation
-    ├── V2/                    # Version 2 implementation
-    ├── GenericFunctions.ts    # API helpers
-    ├── serviceName.svg        # Icon
-    └── test/                  # Node tests
-```
+
+Nodes live in `packages/nodes-base/nodes/`. See [Creating Nodes Guide](https://docs.n8n.io/integrations/creating-nodes/) for structure and best practices.
 
 Credentials go in `packages/nodes-base/credentials/`.
 
 ### Testing Requirements
-All PRs must include tests:
-- **Unit tests**: For logic and utilities
-- **Workflow tests**: For nodes (see `nodes/Switch/V3/test/` for example)
-- **UI tests**: For frontend changes (Vitest + Vue Test Utils)
+
+All PRs must include tests. See [CONTRIBUTING.md](./CONTRIBUTING.md#test-suite) for detailed testing requirements.
 
 ### File Naming
 - Node files: `PascalCase.node.ts`
@@ -218,8 +209,8 @@ Key development environment variables:
 
 ## Warnings
 
-- **Core Package**: Contact n8n team before making changes to `packages/core/`
-- **New Nodes**: PRs adding new nodes are auto-closed unless requested by n8n team
+- **Core Package**: Contact the n8n team before making changes to `packages/core/`
+- **New Nodes**: PRs adding new nodes are auto-closed unless requested by the n8n team
 - **Typo-only PRs**: Will be rejected
 - **Security**: Be aware of XSS, SQL injection, command injection risks
 - **Breaking Changes**: Must be documented in `packages/cli/BREAKING-CHANGES.md`
