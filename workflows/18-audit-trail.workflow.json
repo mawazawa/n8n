@@ -1,0 +1,367 @@
+{
+	"name": "Mother of All Flows - Security Audit Trail",
+	"meta": {
+		"description": "Comprehensive logging with PII masking, tamper-proof storage, and security alerting"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "audit-log",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-audit",
+			"name": "Audit Event Input",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "audit-trail"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and normalize audit event\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Validate required fields\nif (!body.event && !body.action) {\n  throw new Error('Missing required field: event or action');\n}\n\n// Normalize audit event structure\nconst auditEvent = {\n  id: `audit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  timestamp: new Date().toISOString(),\n  version: '1.0',\n  \n  // Event details\n  event: {\n    type: body.event?.type || body.action || 'unknown',\n    category: body.event?.category || body.category || 'general',\n    severity: body.event?.severity || body.severity || 'info',\n    outcome: body.event?.outcome || body.outcome || 'success'\n  },\n  \n  // Actor (who performed the action)\n  actor: {\n    type: body.actor?.type || 'user',\n    id: body.actor?.id || body.userId || 'anonymous',\n    name: body.actor?.name || body.userName || null,\n    email: body.actor?.email || body.userEmail || null,\n    ip: body.actor?.ip || input.headers?.['x-forwarded-for'] || input.headers?.['x-real-ip'] || null\n  },\n  \n  // Resource (what was affected)\n  resource: {\n    type: body.resource?.type || body.resourceType || null,\n    id: body.resource?.id || body.resourceId || null,\n    name: body.resource?.name || body.resourceName || null\n  },\n  \n  // Context\n  context: {\n    workflowId: $workflow.id,\n    executionId: $execution.id,\n    environment: process.env.NODE_ENV || 'development',\n    service: body.context?.service || body.service || 'n8n',\n    requestId: body.context?.requestId || input.headers?.['x-request-id'] || null\n  },\n  \n  // Additional data\n  data: body.data || body.details || {},\n  \n  // Metadata\n  metadata: {\n    source: 'audit-trail-workflow',\n    createdAt: new Date().toISOString()\n  }\n};\n\nreturn [{ json: auditEvent }];"
+			},
+			"id": "parse-event",
+			"name": "Parse Audit Event",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Mask sensitive data (PII, credentials, etc.)\nconst event = $input.first().json;\n\n// Patterns for sensitive data\nconst sensitivePatterns = {\n  email: /\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b/g,\n  phone: /\\b\\d{3}[-.]?\\d{3}[-.]?\\d{4}\\b/g,\n  ssn: /\\b\\d{3}-\\d{2}-\\d{4}\\b/g,\n  creditCard: /\\b\\d{4}[-\\s]?\\d{4}[-\\s]?\\d{4}[-\\s]?\\d{4}\\b/g,\n  apiKey: /\\b(api[_-]?key|apikey|api[_-]?secret)[=:]?\\s*['\"]?([A-Za-z0-9_-]{20,})['\"]?/gi,\n  password: /\\b(password|passwd|pwd)[=:]?\\s*['\"]?[^'\"\\s]+['\"]?/gi,\n  bearer: /Bearer\\s+[A-Za-z0-9._-]+/gi,\n  jwt: /eyJ[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]*/g\n};\n\n// Fields to completely redact\nconst redactedFields = ['password', 'secret', 'token', 'apiKey', 'privateKey', 'accessToken', 'refreshToken'];\n\n// Mask function\nfunction maskValue(value, pattern, replacement) {\n  if (typeof value === 'string') {\n    return value.replace(pattern, replacement);\n  }\n  return value;\n}\n\n// Redact function for entire fields\nfunction redactObject(obj, depth = 0) {\n  if (depth > 10) return obj; // Prevent infinite recursion\n  if (obj === null || obj === undefined) return obj;\n  if (typeof obj !== 'object') return obj;\n  \n  const result = Array.isArray(obj) ? [] : {};\n  \n  for (const [key, value] of Object.entries(obj)) {\n    // Check if key should be fully redacted\n    if (redactedFields.some(f => key.toLowerCase().includes(f.toLowerCase()))) {\n      result[key] = '[REDACTED]';\n      continue;\n    }\n    \n    if (typeof value === 'object' && value !== null) {\n      result[key] = redactObject(value, depth + 1);\n    } else if (typeof value === 'string') {\n      let masked = value;\n      // Apply all masking patterns\n      masked = maskValue(masked, sensitivePatterns.email, '[EMAIL_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.phone, '[PHONE_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.ssn, '[SSN_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.creditCard, '[CC_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.apiKey, '[API_KEY_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.password, '[PASSWORD_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.bearer, '[BEARER_TOKEN_MASKED]');\n      masked = maskValue(masked, sensitivePatterns.jwt, '[JWT_MASKED]');\n      result[key] = masked;\n    } else {\n      result[key] = value;\n    }\n  }\n  \n  return result;\n}\n\n// Mask the event data\nconst maskedEvent = {\n  ...event,\n  actor: redactObject(event.actor),\n  data: redactObject(event.data),\n  _piiMasked: true,\n  _maskedAt: new Date().toISOString()\n};\n\nreturn [{ json: maskedEvent }];"
+			},
+			"id": "mask-pii",
+			"name": "Mask Sensitive Data",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Create cryptographic signature for tamper detection\nconst crypto = require('crypto');\nconst event = $input.first().json;\n\n// Get or initialize chain hash (in production, store in database)\nconst staticData = $workflow.staticData;\nif (!staticData.previousHash) {\n  staticData.previousHash = crypto.createHash('sha256').update('genesis').digest('hex');\n}\n\n// Create event hash\nconst eventString = JSON.stringify({\n  id: event.id,\n  timestamp: event.timestamp,\n  event: event.event,\n  actor: event.actor,\n  resource: event.resource,\n  data: event.data\n});\n\nconst eventHash = crypto.createHash('sha256').update(eventString).digest('hex');\n\n// Create chain hash (links to previous event)\nconst chainHash = crypto.createHash('sha256')\n  .update(staticData.previousHash + eventHash)\n  .digest('hex');\n\n// Update previous hash for next event\nstaticData.previousHash = chainHash;\nstaticData.eventCount = (staticData.eventCount || 0) + 1;\n\nconst signedEvent = {\n  ...event,\n  integrity: {\n    eventHash,\n    chainHash,\n    previousHash: staticData.previousHash,\n    sequence: staticData.eventCount,\n    algorithm: 'sha256',\n    signedAt: new Date().toISOString()\n  }\n};\n\nreturn [{ json: signedEvent }];"
+			},
+			"id": "sign-entry",
+			"name": "Sign Log Entry",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"rules": {
+					"values": [
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.event.severity }}",
+										"rightValue": "critical",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "critical"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.event.category }}",
+										"rightValue": "security",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "security"
+						}
+					]
+				},
+				"options": {
+					"fallbackOutput": "extra"
+				}
+			},
+			"id": "check-severity",
+			"name": "Check Severity",
+			"type": "n8n-nodes-base.switch",
+			"typeVersion": 3.2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Store audit log (append-only)\n// In production, use a proper audit log database\nconst event = $input.first().json;\n\n// Simulate append-only storage\nconst staticData = $workflow.staticData;\nif (!staticData.auditLog) {\n  staticData.auditLog = [];\n}\n\n// Append event (trim to last 1000 events for memory)\nstaticData.auditLog.push(event);\nif (staticData.auditLog.length > 1000) {\n  staticData.auditLog = staticData.auditLog.slice(-1000);\n}\n\nconst stored = {\n  ...event,\n  storage: {\n    status: 'stored',\n    location: 'memory', // In production: 's3://bucket/audit-logs' or similar\n    storedAt: new Date().toISOString(),\n    retentionPolicy: '7years'\n  }\n};\n\nreturn [{ json: stored }];"
+			},
+			"id": "store-log",
+			"name": "Store Audit Log",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 400]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Generate critical security alert\nconst event = $input.first().json;\n\nconst alert = {\n  type: 'CRITICAL_SECURITY_ALERT',\n  priority: 'P1',\n  event: event,\n  alertId: `alert_${Date.now()}`,\n  createdAt: new Date().toISOString(),\n  escalation: {\n    level: 1,\n    notifyChannels: ['slack', 'email', 'pagerduty'],\n    requiresAck: true,\n    autoEscalateAfterMinutes: 15\n  },\n  message: `CRITICAL: ${event.event.type} detected - Actor: ${event.actor.id}, Resource: ${event.resource?.id || 'N/A'}`\n};\n\nreturn [{ json: alert }];"
+			},
+			"id": "create-critical-alert",
+			"name": "Create Critical Alert",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Analyze for security anomalies\nconst event = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize anomaly detection state\nif (!staticData.securityMetrics) {\n  staticData.securityMetrics = {\n    failedLogins: {},\n    unusualIPs: [],\n    eventCounts: {}\n  };\n}\n\nconst metrics = staticData.securityMetrics;\nconst actorId = event.actor.id;\nconst now = Date.now();\n\n// Check for failed login patterns\nconst isFailedLogin = event.event.type.includes('login') && event.event.outcome === 'failure';\nif (isFailedLogin) {\n  if (!metrics.failedLogins[actorId]) {\n    metrics.failedLogins[actorId] = [];\n  }\n  metrics.failedLogins[actorId].push(now);\n  // Keep only last hour\n  metrics.failedLogins[actorId] = metrics.failedLogins[actorId].filter(t => now - t < 3600000);\n}\n\n// Check for anomalies\nconst anomalies = [];\n\n// 5+ failed logins in an hour = brute force attempt\nif (metrics.failedLogins[actorId]?.length >= 5) {\n  anomalies.push({\n    type: 'brute_force_attempt',\n    severity: 'high',\n    details: `${metrics.failedLogins[actorId].length} failed login attempts in the last hour`\n  });\n}\n\n// Unusual time access (outside business hours)\nconst hour = new Date().getUTCHours();\nif (hour < 6 || hour > 22) {\n  anomalies.push({\n    type: 'unusual_time_access',\n    severity: 'medium',\n    details: `Access at unusual hour: ${hour}:00 UTC`\n  });\n}\n\nconst analysis = {\n  ...event,\n  securityAnalysis: {\n    analyzed: true,\n    anomaliesDetected: anomalies.length > 0,\n    anomalies,\n    analyzedAt: new Date().toISOString()\n  }\n};\n\nreturn [{ json: analysis }];"
+			},
+			"id": "security-analysis",
+			"name": "Security Analysis",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 250]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "anomaly-check",
+							"leftValue": "={{ $json.securityAnalysis.anomaliesDetected }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-anomalies",
+			"name": "Anomalies Detected?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1320, 250]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Generate anomaly alert\nconst event = $input.first().json;\n\nconst alert = {\n  type: 'SECURITY_ANOMALY_ALERT',\n  priority: 'P2',\n  event: event,\n  anomalies: event.securityAnalysis.anomalies,\n  alertId: `anomaly_${Date.now()}`,\n  createdAt: new Date().toISOString(),\n  message: `Security anomaly detected: ${event.securityAnalysis.anomalies.map(a => a.type).join(', ')}`\n};\n\nreturn [{ json: alert }];"
+			},
+			"id": "create-anomaly-alert",
+			"name": "Create Anomaly Alert",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1540, 150]
+		},
+		{
+			"parameters": {},
+			"id": "merge-alerts",
+			"name": "Merge Alerts",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [1760, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Compile final response\nconst inputs = $input.all();\nconst storedEvent = inputs.find(i => i.json.storage) || inputs[0];\nconst alerts = inputs.filter(i => i.json.type?.includes('ALERT'));\n\nconst response = {\n  status: 'logged',\n  auditId: storedEvent.json.id,\n  timestamp: storedEvent.json.timestamp,\n  severity: storedEvent.json.event?.severity || 'info',\n  integrity: storedEvent.json.integrity,\n  alerts: alerts.length > 0 ? alerts.map(a => ({\n    type: a.json.type,\n    priority: a.json.priority,\n    alertId: a.json.alertId\n  })) : [],\n  storedAt: storedEvent.json.storage?.storedAt\n};\n\nreturn [{ json: response }];"
+			},
+			"id": "compile-response",
+			"name": "Compile Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1980, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Return Result",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [2200, 300]
+		}
+	],
+	"connections": {
+		"Audit Event Input": {
+			"main": [
+				[
+					{
+						"node": "Parse Audit Event",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Audit Event": {
+			"main": [
+				[
+					{
+						"node": "Mask Sensitive Data",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Mask Sensitive Data": {
+			"main": [
+				[
+					{
+						"node": "Sign Log Entry",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Sign Log Entry": {
+			"main": [
+				[
+					{
+						"node": "Check Severity",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Check Severity": {
+			"main": [
+				[
+					{
+						"node": "Create Critical Alert",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Security Analysis",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Store Audit Log",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Create Critical Alert": {
+			"main": [
+				[
+					{
+						"node": "Merge Alerts",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Security Analysis": {
+			"main": [
+				[
+					{
+						"node": "Check Anomalies",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Check Anomalies": {
+			"main": [
+				[
+					{
+						"node": "Create Anomaly Alert",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Store Audit Log",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Create Anomaly Alert": {
+			"main": [
+				[
+					{
+						"node": "Merge Alerts",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Store Audit Log": {
+			"main": [
+				[
+					{
+						"node": "Compile Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Alerts": {
+			"main": [
+				[
+					{
+						"node": "Compile Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Compile Response": {
+			"main": [
+				[
+					{
+						"node": "Return Result",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

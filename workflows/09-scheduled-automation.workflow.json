@@ -1,0 +1,200 @@
+{
+	"name": "Mother of All Flows - Scheduled Automation Engine",
+	"meta": {
+		"description": "Intelligent time-based orchestration with timezone handling, business hours, and catch-up logic"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"rule": {
+					"interval": [
+						{
+							"field": "cronExpression",
+							"expression": "0 9 * * 1-5"
+						}
+					]
+				}
+			},
+			"id": "cron-trigger",
+			"name": "Schedule Trigger",
+			"type": "n8n-nodes-base.scheduleTrigger",
+			"typeVersion": 1.2,
+			"position": [0, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Initialize execution context with timezone awareness\nconst now = new Date();\n\n// Configuration (can be moved to environment variables)\nconst config = {\n  timezone: 'America/New_York',\n  businessHours: {\n    start: 9,\n    end: 17,\n    days: [1, 2, 3, 4, 5] // Monday-Friday\n  },\n  holidays: [\n    '2025-01-01', // New Year's Day\n    '2025-12-25', // Christmas\n    '2025-07-04', // Independence Day\n    // Add more holidays as needed\n  ],\n  catchUpEnabled: true,\n  maxCatchUpRuns: 5\n};\n\n// Get current time in target timezone\nconst options = { timeZone: config.timezone, hour12: false };\nconst localTime = now.toLocaleString('en-US', options);\nconst localDate = now.toLocaleDateString('en-CA', { timeZone: config.timezone });\nconst localHour = parseInt(now.toLocaleString('en-US', { ...options, hour: '2-digit' }));\nconst localDay = now.toLocaleDateString('en-US', { timeZone: config.timezone, weekday: 'long' });\nconst dayOfWeek = new Date(localDate).getDay();\n\n// Check if today is a holiday\nconst isHoliday = config.holidays.includes(localDate);\n\n// Check if within business hours\nconst isBusinessDay = config.businessHours.days.includes(dayOfWeek);\nconst isBusinessHour = localHour >= config.businessHours.start && localHour < config.businessHours.end;\nconst isBusinessTime = isBusinessDay && isBusinessHour && !isHoliday;\n\n// Execution metadata\nconst executionMeta = {\n  executionId: `exec_${Date.now()}`,\n  scheduledAt: now.toISOString(),\n  localTime,\n  localDate,\n  dayOfWeek: localDay,\n  timezone: config.timezone,\n  isBusinessTime,\n  isHoliday,\n  config\n};\n\nreturn [{ json: executionMeta }];"
+			},
+			"id": "init-context",
+			"name": "Initialize Context",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "business-time-check",
+							"leftValue": "={{ $json.isBusinessTime }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-business-hours",
+			"name": "Business Hours?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Execute the main scheduled task\n// This is where your actual automation logic goes\nconst context = $input.first().json;\n\nconsole.log(`Executing scheduled task at ${context.localTime}`);\n\n// Simulated task execution - replace with actual logic\nconst taskResult = {\n  ...context,\n  task: {\n    name: 'Daily Report Generation',\n    status: 'completed',\n    startedAt: new Date().toISOString(),\n    result: {\n      recordsProcessed: Math.floor(Math.random() * 1000) + 100,\n      reportsGenerated: Math.floor(Math.random() * 10) + 1\n    }\n  }\n};\n\ntaskResult.task.completedAt = new Date().toISOString();\ntaskResult.task.duration = Date.now() - new Date(taskResult.scheduledAt).getTime();\n\nreturn [{ json: taskResult }];"
+			},
+			"id": "execute-task",
+			"name": "Execute Scheduled Task",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle deferral for non-business hours\nconst context = $input.first().json;\n\n// Calculate next business hour\nconst nextBusinessTime = () => {\n  const now = new Date();\n  const config = context.config;\n  \n  // Find next valid execution time\n  let candidate = new Date(now);\n  candidate.setHours(config.businessHours.start, 0, 0, 0);\n  \n  // If past start time today, move to tomorrow\n  if (now.getHours() >= config.businessHours.start) {\n    candidate.setDate(candidate.getDate() + 1);\n  }\n  \n  // Skip weekends\n  while (!config.businessHours.days.includes(candidate.getDay())) {\n    candidate.setDate(candidate.getDate() + 1);\n  }\n  \n  // Skip holidays (simplified check)\n  const candidateDate = candidate.toISOString().split('T')[0];\n  while (config.holidays.includes(candidateDate)) {\n    candidate.setDate(candidate.getDate() + 1);\n  }\n  \n  return candidate.toISOString();\n};\n\nconst deferral = {\n  ...context,\n  deferred: true,\n  reason: context.isHoliday ? 'holiday' : 'outside_business_hours',\n  nextAttempt: nextBusinessTime(),\n  deferredAt: new Date().toISOString()\n};\n\nreturn [{ json: deferral }];"
+			},
+			"id": "defer-execution",
+			"name": "Defer to Business Hours",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 400]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Check for missed executions and catch up if enabled\nconst context = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize static data\nif (!staticData.lastExecution) {\n  staticData.lastExecution = new Date().toISOString();\n  staticData.missedExecutions = [];\n}\n\nconst lastExec = new Date(staticData.lastExecution);\nconst now = new Date();\nconst hoursSinceLastExec = (now - lastExec) / (1000 * 60 * 60);\n\n// Check if we missed any scheduled runs (assuming hourly schedule)\nconst missedRuns = Math.floor(hoursSinceLastExec) - 1;\nconst shouldCatchUp = context.config.catchUpEnabled && missedRuns > 0;\n\nif (shouldCatchUp) {\n  const catchUpCount = Math.min(missedRuns, context.config.maxCatchUpRuns);\n  \n  for (let i = 0; i < catchUpCount; i++) {\n    staticData.missedExecutions.push({\n      scheduledFor: new Date(lastExec.getTime() + (i + 1) * 60 * 60 * 1000).toISOString(),\n      catchUpAt: now.toISOString()\n    });\n  }\n}\n\n// Update last execution time\nstaticData.lastExecution = now.toISOString();\n\nreturn [{\n  json: {\n    ...context,\n    catchUp: {\n      enabled: context.config.catchUpEnabled,\n      missedRuns,\n      catchUpRuns: shouldCatchUp ? Math.min(missedRuns, context.config.maxCatchUpRuns) : 0,\n      history: staticData.missedExecutions.slice(-10)\n    }\n  }\n}];"
+			},
+			"id": "check-catchup",
+			"name": "Check Catch-Up",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [920, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Log execution for monitoring\nconst result = $input.first().json;\n\nconst logEntry = {\n  type: result.deferred ? 'deferred' : 'executed',\n  executionId: result.executionId,\n  timestamp: new Date().toISOString(),\n  localTime: result.localTime,\n  timezone: result.timezone,\n  task: result.task || null,\n  deferred: result.deferred || false,\n  reason: result.reason || null,\n  nextAttempt: result.nextAttempt || null,\n  catchUp: result.catchUp || null\n};\n\n// In production, send to logging service or database\nconsole.log('Execution Log:', JSON.stringify(logEntry, null, 2));\n\nreturn [{ json: logEntry }];"
+			},
+			"id": "log-execution",
+			"name": "Log Execution",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1140, 300]
+		},
+		{
+			"parameters": {},
+			"id": "merge-paths",
+			"name": "Merge Paths",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [920, 400]
+		}
+	],
+	"connections": {
+		"Schedule Trigger": {
+			"main": [
+				[
+					{
+						"node": "Initialize Context",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Initialize Context": {
+			"main": [
+				[
+					{
+						"node": "Business Hours?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Business Hours?": {
+			"main": [
+				[
+					{
+						"node": "Execute Scheduled Task",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Defer to Business Hours",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Execute Scheduled Task": {
+			"main": [
+				[
+					{
+						"node": "Check Catch-Up",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Defer to Business Hours": {
+			"main": [
+				[
+					{
+						"node": "Merge Paths",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Check Catch-Up": {
+			"main": [
+				[
+					{
+						"node": "Merge Paths",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Paths": {
+			"main": [
+				[
+					{
+						"node": "Log Execution",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

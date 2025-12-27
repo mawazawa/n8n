@@ -1,0 +1,523 @@
+{
+	"name": "Mother of All Flows - Multi-Channel Notification Hub",
+	"meta": {
+		"description": "Unified notification system with channel routing, user preferences, and delivery tracking"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "notify",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-notify",
+			"name": "Notification Request",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "notification-hub"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and validate notification request\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Validate required fields\nif (!body.recipient) {\n  throw new Error('Missing required field: recipient');\n}\nif (!body.message && !body.template) {\n  throw new Error('Missing required field: message or template');\n}\n\n// Default notification structure\nconst notification = {\n  id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  recipient: body.recipient,\n  channels: body.channels || ['email'],\n  priority: body.priority || 'normal',\n  template: body.template || null,\n  message: {\n    subject: body.subject || body.message?.subject || 'Notification',\n    body: body.message?.body || body.message || '',\n    html: body.message?.html || null\n  },\n  metadata: body.metadata || {},\n  createdAt: new Date().toISOString(),\n  status: 'pending',\n  deliveries: []\n};\n\nreturn [{ json: notification }];"
+			},
+			"id": "parse-request",
+			"name": "Parse Request",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Load user preferences (in production, fetch from database)\n// This simulates a preference lookup\nconst notification = $input.first().json;\nconst recipient = notification.recipient;\n\n// Simulated user preferences (replace with database lookup)\nconst defaultPreferences = {\n  channels: {\n    email: { enabled: true, address: recipient.email || recipient },\n    slack: { enabled: false, userId: null },\n    sms: { enabled: false, phone: null },\n    webhook: { enabled: false, url: null }\n  },\n  timezone: 'UTC',\n  digestMode: false,\n  quietHours: { enabled: false, start: '22:00', end: '08:00' }\n};\n\n// Merge with any provided preferences\nconst preferences = {\n  ...defaultPreferences,\n  ...(recipient.preferences || {})\n};\n\nreturn [{\n  json: {\n    notification,\n    preferences,\n    selectedChannels: notification.channels.filter(ch => \n      preferences.channels[ch]?.enabled !== false\n    )\n  }\n}];"
+			},
+			"id": "load-preferences",
+			"name": "Load User Preferences",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Apply template if specified\nconst data = $input.first().json;\nconst notification = data.notification;\n\n// Template library (in production, load from database)\nconst templates = {\n  'welcome': {\n    subject: 'Welcome to {{appName}}!',\n    body: 'Hello {{name}}, welcome to {{appName}}. We\\'re excited to have you!',\n    html: '<h1>Welcome!</h1><p>Hello {{name}}, welcome to <strong>{{appName}}</strong>.</p>'\n  },\n  'alert': {\n    subject: '[ALERT] {{alertType}}: {{summary}}',\n    body: 'Alert: {{alertType}}\\n\\nDetails: {{details}}\\n\\nTime: {{timestamp}}',\n    html: '<div style=\"background:#ff6b6b;color:white;padding:10px\"><h2>{{alertType}}</h2><p>{{details}}</p></div>'\n  },\n  'digest': {\n    subject: 'Your Daily Digest - {{date}}',\n    body: 'Here\\'s your summary for {{date}}:\\n\\n{{items}}',\n    html: '<h2>Daily Digest</h2><p>{{date}}</p><ul>{{items}}</ul>'\n  }\n};\n\nlet message = notification.message;\n\nif (notification.template && templates[notification.template]) {\n  const template = templates[notification.template];\n  const vars = notification.metadata || {};\n  \n  // Simple variable substitution\n  const substitute = (str) => {\n    if (!str) return str;\n    return str.replace(/\\{\\{(\\w+)\\}\\}/g, (match, key) => vars[key] || match);\n  };\n  \n  message = {\n    subject: substitute(template.subject),\n    body: substitute(template.body),\n    html: substitute(template.html)\n  };\n}\n\nreturn [{\n  json: {\n    ...data,\n    notification: {\n      ...notification,\n      message\n    }\n  }\n}];"
+			},
+			"id": "apply-template",
+			"name": "Apply Template",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Split into individual channel deliveries\nconst data = $input.first().json;\nconst channels = data.selectedChannels;\n\nreturn channels.map(channel => ({\n  json: {\n    channel,\n    notification: data.notification,\n    preferences: data.preferences,\n    deliveryId: `del_${Date.now()}_${channel}_${Math.random().toString(36).substr(2, 5)}`\n  }\n}));"
+			},
+			"id": "split-channels",
+			"name": "Split by Channel",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"rules": {
+					"values": [
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.channel }}",
+										"rightValue": "email",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "email"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.channel }}",
+										"rightValue": "slack",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "slack"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.channel }}",
+										"rightValue": "sms",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "sms"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.channel }}",
+										"rightValue": "webhook",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "webhook"
+						}
+					]
+				},
+				"options": {
+					"fallbackOutput": "extra"
+				}
+			},
+			"id": "route-channel",
+			"name": "Route by Channel",
+			"type": "n8n-nodes-base.switch",
+			"typeVersion": 3.2,
+			"position": [1100, 300]
+		},
+		{
+			"parameters": {
+				"fromEmail": "notifications@example.com",
+				"toEmail": "={{ $json.preferences.channels.email.address || $json.notification.recipient }}",
+				"subject": "={{ $json.notification.message.subject }}",
+				"emailType": "html",
+				"html": "={{ $json.notification.message.html || $json.notification.message.body }}"
+			},
+			"id": "send-email",
+			"name": "Send Email",
+			"type": "n8n-nodes-base.emailSend",
+			"typeVersion": 2.1,
+			"position": [1360, 100],
+			"credentials": {
+				"smtp": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "SMTP"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"channel": "={{ $json.preferences.channels.slack.channel || '#notifications' }}",
+				"text": "={{ $json.notification.message.body }}",
+				"otherOptions": {
+					"username": "Notification Bot"
+				}
+			},
+			"id": "send-slack",
+			"name": "Send Slack",
+			"type": "n8n-nodes-base.slack",
+			"typeVersion": 2.2,
+			"position": [1360, 280],
+			"credentials": {
+				"slackApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "Slack API"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"operation": "send",
+				"from": "+1234567890",
+				"to": "={{ $json.preferences.channels.sms.phone }}",
+				"message": "={{ $json.notification.message.body.substring(0, 160) }}"
+			},
+			"id": "send-sms",
+			"name": "Send SMS",
+			"type": "n8n-nodes-base.twilio",
+			"typeVersion": 1,
+			"position": [1360, 460],
+			"credentials": {
+				"twilioApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "Twilio API"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"method": "POST",
+				"url": "={{ $json.preferences.channels.webhook.url }}",
+				"sendBody": true,
+				"bodyParameters": {
+					"parameters": [
+						{
+							"name": "notification",
+							"value": "={{ JSON.stringify($json.notification) }}"
+						}
+					]
+				},
+				"options": {
+					"timeout": 10000
+				}
+			},
+			"id": "send-webhook",
+			"name": "Send Webhook",
+			"type": "n8n-nodes-base.httpRequest",
+			"typeVersion": 4.2,
+			"position": [1360, 640],
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Track delivery status\nconst input = $input.first().json;\nconst channel = $('Split by Channel').first().json.channel;\nconst deliveryId = $('Split by Channel').first().json.deliveryId;\nconst notificationId = $('Split by Channel').first().json.notification.id;\n\n// Determine if delivery was successful\nconst success = !input.error;\n\nreturn [{\n  json: {\n    notificationId,\n    deliveryId,\n    channel,\n    status: success ? 'delivered' : 'failed',\n    error: input.error?.message || null,\n    deliveredAt: success ? new Date().toISOString() : null\n  }\n}];"
+			},
+			"id": "track-email",
+			"name": "Track Email",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1580, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Track Slack delivery\nconst input = $input.first().json;\nconst channel = 'slack';\nconst deliveryId = $('Split by Channel').first().json.deliveryId;\nconst notificationId = $('Split by Channel').first().json.notification.id;\n\nconst success = input.ok !== false && !input.error;\n\nreturn [{\n  json: {\n    notificationId,\n    deliveryId,\n    channel,\n    status: success ? 'delivered' : 'failed',\n    error: input.error?.message || null,\n    messageTs: input.ts || null,\n    deliveredAt: success ? new Date().toISOString() : null\n  }\n}];"
+			},
+			"id": "track-slack",
+			"name": "Track Slack",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1580, 280]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Track SMS delivery\nconst input = $input.first().json;\nconst channel = 'sms';\nconst deliveryId = $('Split by Channel').first().json.deliveryId;\nconst notificationId = $('Split by Channel').first().json.notification.id;\n\nconst success = input.sid && !input.error;\n\nreturn [{\n  json: {\n    notificationId,\n    deliveryId,\n    channel,\n    status: success ? 'delivered' : 'failed',\n    error: input.error?.message || null,\n    messageSid: input.sid || null,\n    deliveredAt: success ? new Date().toISOString() : null\n  }\n}];"
+			},
+			"id": "track-sms",
+			"name": "Track SMS",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1580, 460]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Track webhook delivery\nconst input = $input.first().json;\nconst channel = 'webhook';\nconst deliveryId = $('Split by Channel').first().json.deliveryId;\nconst notificationId = $('Split by Channel').first().json.notification.id;\n\nconst success = input.statusCode >= 200 && input.statusCode < 300;\n\nreturn [{\n  json: {\n    notificationId,\n    deliveryId,\n    channel,\n    status: success ? 'delivered' : 'failed',\n    statusCode: input.statusCode || null,\n    error: !success ? `HTTP ${input.statusCode}` : null,\n    deliveredAt: success ? new Date().toISOString() : null\n  }\n}];"
+			},
+			"id": "track-webhook",
+			"name": "Track Webhook",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1580, 640]
+		},
+		{
+			"parameters": {},
+			"id": "merge-tracking",
+			"name": "Merge Tracking",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [1800, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Compile final delivery report\nconst deliveries = $input.all().map(i => i.json);\nconst notificationId = deliveries[0]?.notificationId;\n\nconst successful = deliveries.filter(d => d.status === 'delivered');\nconst failed = deliveries.filter(d => d.status === 'failed');\n\nreturn [{\n  json: {\n    notificationId,\n    status: failed.length === 0 ? 'delivered' : \n            successful.length === 0 ? 'failed' : 'partial',\n    summary: {\n      total: deliveries.length,\n      delivered: successful.length,\n      failed: failed.length\n    },\n    deliveries,\n    completedAt: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "compile-report",
+			"name": "Compile Report",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2020, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Return Status",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [2240, 300]
+		}
+	],
+	"connections": {
+		"Notification Request": {
+			"main": [
+				[
+					{
+						"node": "Parse Request",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Request": {
+			"main": [
+				[
+					{
+						"node": "Load User Preferences",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Load User Preferences": {
+			"main": [
+				[
+					{
+						"node": "Apply Template",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Apply Template": {
+			"main": [
+				[
+					{
+						"node": "Split by Channel",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Split by Channel": {
+			"main": [
+				[
+					{
+						"node": "Route by Channel",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Route by Channel": {
+			"main": [
+				[
+					{
+						"node": "Send Email",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Send Slack",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Send SMS",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Send Webhook",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Send Email": {
+			"main": [
+				[
+					{
+						"node": "Track Email",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Send Slack": {
+			"main": [
+				[
+					{
+						"node": "Track Slack",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Send SMS": {
+			"main": [
+				[
+					{
+						"node": "Track SMS",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Send Webhook": {
+			"main": [
+				[
+					{
+						"node": "Track Webhook",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Track Email": {
+			"main": [
+				[
+					{
+						"node": "Merge Tracking",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Track Slack": {
+			"main": [
+				[
+					{
+						"node": "Merge Tracking",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Track SMS": {
+			"main": [
+				[
+					{
+						"node": "Merge Tracking",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Track Webhook": {
+			"main": [
+				[
+					{
+						"node": "Merge Tracking",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Tracking": {
+			"main": [
+				[
+					{
+						"node": "Compile Report",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Compile Report": {
+			"main": [
+				[
+					{
+						"node": "Return Status",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

@@ -1,0 +1,196 @@
+{
+	"name": "Mother of All Flows - Data Sync Pipeline",
+	"meta": {
+		"description": "Bidirectional data synchronization with conflict resolution, delta sync, and rollback capability"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "sync",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-sync",
+			"name": "Sync Request",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "data-sync"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Initialize sync context and configuration\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Sync configuration\nconst config = {\n  // Sync mode: 'full', 'delta', 'realtime'\n  mode: body.mode || 'delta',\n  \n  // Conflict resolution: 'source_wins', 'target_wins', 'latest_wins', 'merge', 'manual'\n  conflictResolution: body.conflictResolution || 'latest_wins',\n  \n  // Source and target configuration\n  source: body.source || { type: 'database', name: 'source_db' },\n  target: body.target || { type: 'api', name: 'target_api' },\n  \n  // Sync options\n  batchSize: body.batchSize || 100,\n  retryAttempts: body.retryAttempts || 3,\n  enableRollback: body.enableRollback !== false,\n  \n  // Field mapping\n  fieldMapping: body.fieldMapping || null\n};\n\n// Initialize sync context\nconst syncContext = {\n  syncId: `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  startedAt: new Date().toISOString(),\n  config,\n  status: 'initializing',\n  stats: {\n    processed: 0,\n    created: 0,\n    updated: 0,\n    deleted: 0,\n    skipped: 0,\n    conflicts: 0,\n    errors: 0\n  },\n  errors: [],\n  conflicts: []\n};\n\nreturn [{ json: syncContext }];"
+			},
+			"id": "init-sync",
+			"name": "Initialize Sync",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Fetch source data and detect changes\nconst context = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize sync state\nif (!staticData.lastSync) {\n  staticData.lastSync = {};\n}\n\nconst sourceName = context.config.source.name;\nconst lastSyncTime = staticData.lastSync[sourceName] || null;\n\n// Simulated source data fetch (replace with actual data source)\n// In production, use HTTP Request node or database node\nconst simulatedSourceData = [\n  { id: '1', name: 'Item 1', updatedAt: new Date().toISOString(), data: { value: 100 } },\n  { id: '2', name: 'Item 2', updatedAt: new Date(Date.now() - 3600000).toISOString(), data: { value: 200 } },\n  { id: '3', name: 'Item 3', updatedAt: new Date(Date.now() - 7200000).toISOString(), data: { value: 300 } },\n  { id: '4', name: 'Item 4 (new)', updatedAt: new Date().toISOString(), data: { value: 400 } }\n];\n\n// Filter for delta sync\nlet sourceRecords = simulatedSourceData;\nif (context.config.mode === 'delta' && lastSyncTime) {\n  sourceRecords = simulatedSourceData.filter(r => \n    new Date(r.updatedAt) > new Date(lastSyncTime)\n  );\n}\n\n// Create hash for each record (for change detection)\nconst crypto = require('crypto');\nconst recordsWithHash = sourceRecords.map(record => {\n  const hash = crypto.createHash('md5')\n    .update(JSON.stringify(record.data))\n    .digest('hex');\n  return { ...record, _hash: hash };\n});\n\nreturn [{\n  json: {\n    ...context,\n    status: 'fetching',\n    sourceRecords: recordsWithHash,\n    lastSyncTime,\n    fetchedAt: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "fetch-source",
+			"name": "Fetch Source Data",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Fetch target data for comparison\nconst context = $input.first().json;\n\n// Get IDs to fetch from target\nconst sourceIds = context.sourceRecords.map(r => r.id);\n\n// Simulated target data fetch (replace with actual target API/database)\nconst simulatedTargetData = [\n  { id: '1', name: 'Item 1', updatedAt: new Date(Date.now() - 1800000).toISOString(), data: { value: 100 }, _hash: 'abc123' },\n  { id: '2', name: 'Item 2 (modified)', updatedAt: new Date().toISOString(), data: { value: 250 }, _hash: 'def456' },\n  { id: '3', name: 'Item 3', updatedAt: new Date(Date.now() - 7200000).toISOString(), data: { value: 300 }, _hash: 'ghi789' }\n];\n\n// Create lookup map\nconst targetMap = {};\nfor (const record of simulatedTargetData) {\n  targetMap[record.id] = record;\n}\n\nreturn [{\n  json: {\n    ...context,\n    targetRecords: simulatedTargetData,\n    targetMap,\n    status: 'comparing'\n  }\n}];"
+			},
+			"id": "fetch-target",
+			"name": "Fetch Target Data",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Detect changes and conflicts\nconst context = $input.first().json;\nconst sourceRecords = context.sourceRecords;\nconst targetMap = context.targetMap;\nconst conflictResolution = context.config.conflictResolution;\n\nconst changes = {\n  create: [],\n  update: [],\n  conflict: [],\n  skip: []\n};\n\nfor (const sourceRecord of sourceRecords) {\n  const targetRecord = targetMap[sourceRecord.id];\n  \n  if (!targetRecord) {\n    // New record - create\n    changes.create.push({\n      action: 'create',\n      record: sourceRecord,\n      reason: 'not_in_target'\n    });\n  } else if (sourceRecord._hash === targetRecord._hash) {\n    // No change - skip\n    changes.skip.push({\n      action: 'skip',\n      record: sourceRecord,\n      reason: 'no_change'\n    });\n  } else {\n    // Different - check for conflict\n    const sourceTime = new Date(sourceRecord.updatedAt).getTime();\n    const targetTime = new Date(targetRecord.updatedAt).getTime();\n    \n    if (sourceTime > targetTime) {\n      // Source is newer - update\n      changes.update.push({\n        action: 'update',\n        record: sourceRecord,\n        previousRecord: targetRecord,\n        reason: 'source_newer'\n      });\n    } else if (sourceTime < targetTime) {\n      // Target is newer - potential conflict\n      if (conflictResolution === 'source_wins') {\n        changes.update.push({\n          action: 'update',\n          record: sourceRecord,\n          previousRecord: targetRecord,\n          reason: 'source_wins_policy'\n        });\n      } else if (conflictResolution === 'target_wins') {\n        changes.skip.push({\n          action: 'skip',\n          record: sourceRecord,\n          reason: 'target_wins_policy'\n        });\n      } else if (conflictResolution === 'latest_wins') {\n        changes.skip.push({\n          action: 'skip',\n          record: sourceRecord,\n          reason: 'target_is_latest'\n        });\n      } else {\n        // Manual resolution needed\n        changes.conflict.push({\n          action: 'conflict',\n          sourceRecord,\n          targetRecord,\n          reason: 'manual_resolution_required'\n        });\n      }\n    } else {\n      // Same timestamp but different content - merge conflict\n      changes.conflict.push({\n        action: 'conflict',\n        sourceRecord,\n        targetRecord,\n        reason: 'concurrent_modification'\n      });\n    }\n  }\n}\n\nreturn [{\n  json: {\n    ...context,\n    changes,\n    status: 'processing',\n    changesSummary: {\n      toCreate: changes.create.length,\n      toUpdate: changes.update.length,\n      conflicts: changes.conflict.length,\n      toSkip: changes.skip.length\n    }\n  }\n}];"
+			},
+			"id": "detect-changes",
+			"name": "Detect Changes",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Create rollback snapshot before applying changes\nconst context = $input.first().json;\nconst staticData = $workflow.staticData;\n\nif (context.config.enableRollback) {\n  // Store rollback data\n  if (!staticData.rollbackSnapshots) {\n    staticData.rollbackSnapshots = [];\n  }\n  \n  const snapshot = {\n    syncId: context.syncId,\n    createdAt: new Date().toISOString(),\n    changes: context.changes,\n    targetSnapshot: context.targetRecords\n  };\n  \n  staticData.rollbackSnapshots.push(snapshot);\n  \n  // Keep only last 10 snapshots\n  if (staticData.rollbackSnapshots.length > 10) {\n    staticData.rollbackSnapshots = staticData.rollbackSnapshots.slice(-10);\n  }\n  \n  return [{\n    json: {\n      ...context,\n      rollbackEnabled: true,\n      snapshotId: context.syncId\n    }\n  }];\n}\n\nreturn [{ json: { ...context, rollbackEnabled: false } }];"
+			},
+			"id": "create-snapshot",
+			"name": "Create Rollback Snapshot",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Apply changes to target\nconst context = $input.first().json;\nconst changes = context.changes;\nconst stats = { ...context.stats };\nconst errors = [];\n\n// Process creates\nfor (const item of changes.create) {\n  try {\n    // Simulated create (replace with actual API/database call)\n    console.log(`Creating: ${item.record.id}`);\n    stats.created++;\n    stats.processed++;\n  } catch (error) {\n    errors.push({ action: 'create', record: item.record, error: error.message });\n    stats.errors++;\n  }\n}\n\n// Process updates\nfor (const item of changes.update) {\n  try {\n    // Simulated update (replace with actual API/database call)\n    console.log(`Updating: ${item.record.id}`);\n    stats.updated++;\n    stats.processed++;\n  } catch (error) {\n    errors.push({ action: 'update', record: item.record, error: error.message });\n    stats.errors++;\n  }\n}\n\n// Track skipped\nstats.skipped = changes.skip.length;\nstats.conflicts = changes.conflict.length;\n\nreturn [{\n  json: {\n    ...context,\n    stats,\n    errors,\n    conflicts: changes.conflict,\n    status: 'verifying'\n  }\n}];"
+			},
+			"id": "apply-changes",
+			"name": "Apply Changes",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1320, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Verify sync and compile report\nconst context = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Update last sync time\nconst sourceName = context.config.source.name;\nstaticData.lastSync = staticData.lastSync || {};\nstaticData.lastSync[sourceName] = new Date().toISOString();\n\n// Determine final status\nlet status = 'completed';\nif (context.stats.errors > 0) {\n  status = context.stats.processed > 0 ? 'partial' : 'failed';\n} else if (context.stats.conflicts > 0) {\n  status = 'completed_with_conflicts';\n}\n\nconst report = {\n  syncId: context.syncId,\n  status,\n  mode: context.config.mode,\n  source: context.config.source.name,\n  target: context.config.target.name,\n  \n  timing: {\n    startedAt: context.startedAt,\n    completedAt: new Date().toISOString(),\n    durationMs: Date.now() - new Date(context.startedAt).getTime()\n  },\n  \n  stats: context.stats,\n  \n  rollback: context.rollbackEnabled ? {\n    available: true,\n    snapshotId: context.snapshotId,\n    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()\n  } : { available: false },\n  \n  errors: context.errors.length > 0 ? context.errors : null,\n  conflicts: context.conflicts.length > 0 ? context.conflicts : null\n};\n\nreturn [{ json: report }];"
+			},
+			"id": "compile-report",
+			"name": "Compile Sync Report",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1540, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Return Report",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1760, 300]
+		}
+	],
+	"connections": {
+		"Sync Request": {
+			"main": [
+				[
+					{
+						"node": "Initialize Sync",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Initialize Sync": {
+			"main": [
+				[
+					{
+						"node": "Fetch Source Data",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Fetch Source Data": {
+			"main": [
+				[
+					{
+						"node": "Fetch Target Data",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Fetch Target Data": {
+			"main": [
+				[
+					{
+						"node": "Detect Changes",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Detect Changes": {
+			"main": [
+				[
+					{
+						"node": "Create Rollback Snapshot",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Create Rollback Snapshot": {
+			"main": [
+				[
+					{
+						"node": "Apply Changes",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Apply Changes": {
+			"main": [
+				[
+					{
+						"node": "Compile Sync Report",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Compile Sync Report": {
+			"main": [
+				[
+					{
+						"node": "Return Report",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

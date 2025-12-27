@@ -6,11 +6,12 @@ Production-ready n8n 2.0 workflow templates implementing the highest leverage au
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| **Core Templates** | 8 | Original high-leverage workflow patterns |
+| **Core Templates (Phase 1)** | 8 | Original high-leverage workflow patterns |
+| **Core Templates (Phase 2)** | 4 | Advanced enterprise patterns |
 | **Community Verified** | 16 | Curated from top community repositories |
-| **Total** | 24 | Ready-to-import workflows |
+| **Total** | 28 | Ready-to-import workflows |
 
-### Core Templates (All 10 High-Leverage Actions)
+### Core Templates - Phase 1 (Actions 1-10)
 
 | # | Workflow | Pattern |
 |---|----------|---------|
@@ -22,6 +23,15 @@ Production-ready n8n 2.0 workflow templates implementing the highest leverage au
 | 06 | Batch Processor | Parallel processing with recovery |
 | 07 | Data Extractor | Structured extraction from text |
 | 08 | Sub-Workflow Tool | Reusable tool template for agents |
+
+### Core Templates - Phase 2 (Actions 11-20)
+
+| # | Workflow | Pattern |
+|---|----------|---------|
+| 09 | Scheduled Automation | Timezone-aware cron with business hours |
+| 10 | Data Sync Pipeline | Bidirectional sync with conflict resolution |
+| 15 | Notification Hub | Multi-channel notifications with tracking |
+| 18 | Audit Trail | Security logging with PII masking |
 
 See also: [Community Workflows](./community/README.md)
 
