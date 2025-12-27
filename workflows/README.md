@@ -6,9 +6,22 @@ Production-ready n8n 2.0 workflow templates implementing the highest leverage au
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| **Core Templates** | 4 | Original high-leverage workflow patterns |
+| **Core Templates** | 8 | Original high-leverage workflow patterns |
 | **Community Verified** | 16 | Curated from top community repositories |
-| **Total** | 20 | Ready-to-import workflows |
+| **Total** | 24 | Ready-to-import workflows |
+
+### Core Templates (All 10 High-Leverage Actions)
+
+| # | Workflow | Pattern |
+|---|----------|---------|
+| 01 | AI Agent Orchestrator | Autonomous agent with tools |
+| 02 | RAG Pipeline | Document ingestion + knowledge Q&A |
+| 03 | Webhook Hub | Event routing orchestration |
+| 04 | Self-Healing Error Handler | AI error analysis + recovery |
+| 05 | Multi-Model Fallback | GPT-4o → Claude → Gemini chain |
+| 06 | Batch Processor | Parallel processing with recovery |
+| 07 | Data Extractor | Structured extraction from text |
+| 08 | Sub-Workflow Tool | Reusable tool template for agents |
 
 See also: [Community Workflows](./community/README.md)
 

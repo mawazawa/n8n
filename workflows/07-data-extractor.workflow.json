@@ -1,0 +1,194 @@
+{
+	"name": "Mother of All Flows - Structured Data Extractor",
+	"meta": {
+		"description": "AI-powered extraction of structured data from unstructured content"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "extract-data",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-extract",
+			"name": "Data Input",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "data-extractor"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Prepare content for extraction\nconst input = $input.first().json;\nconst content = input.body?.content || input.content || '';\nconst schema = input.body?.schema || input.schema || null;\n\nif (!content) {\n  throw new Error('No content provided for extraction');\n}\n\n// Default schema if none provided\nconst defaultSchema = {\n  type: 'object',\n  properties: {\n    entities: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          name: { type: 'string' },\n          type: { type: 'string' },\n          value: { type: 'string' }\n        }\n      }\n    },\n    dates: { type: 'array', items: { type: 'string' } },\n    amounts: { type: 'array', items: { type: 'number' } },\n    summary: { type: 'string' }\n  }\n};\n\nreturn [{\n  json: {\n    content,\n    schema: schema || defaultSchema,\n    schemaString: JSON.stringify(schema || defaultSchema, null, 2)\n  }\n}];"
+			},
+			"id": "prepare-extraction",
+			"name": "Prepare Extraction",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o-mini",
+				"messages": {
+					"values": [
+						{
+							"role": "system",
+							"content": "You are a precise data extraction assistant. Extract structured data from the provided content according to the specified JSON schema. Always respond with valid JSON that matches the schema exactly. Do not include any text outside the JSON object."
+						},
+						{
+							"role": "user",
+							"content": "Extract data from the following content according to this schema:\n\nSCHEMA:\n{{ $json.schemaString }}\n\nCONTENT:\n{{ $json.content }}\n\nRespond with ONLY valid JSON matching the schema."
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.1,
+					"responseFormat": "json_object"
+				}
+			},
+			"id": "extract-with-ai",
+			"name": "AI Extraction",
+			"type": "@n8n/n8n-nodes-langchain.openAi",
+			"typeVersion": 1.8,
+			"position": [440, 300],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and validate extracted data\nconst input = $input.first().json;\nlet extracted;\n\ntry {\n  const content = input.message?.content || input.choices?.[0]?.message?.content || '{}';\n  extracted = JSON.parse(content);\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: 'Failed to parse AI response as JSON',\n      rawResponse: input.message?.content || input.choices?.[0]?.message?.content\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    extracted,\n    metadata: {\n      extractedAt: new Date().toISOString(),\n      model: 'gpt-4o-mini',\n      contentLength: $('Prepare Extraction').first().json.content.length\n    }\n  }\n}];"
+			},
+			"id": "validate-output",
+			"name": "Validate & Format",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "success-check",
+							"leftValue": "={{ $json.success }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-success",
+			"name": "Extraction Success?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-success",
+			"name": "Return Extracted Data",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1100, 200]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}",
+				"options": {
+					"responseCode": 422
+				}
+			},
+			"id": "respond-error",
+			"name": "Return Error",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1100, 400]
+		}
+	],
+	"connections": {
+		"Data Input": {
+			"main": [
+				[
+					{
+						"node": "Prepare Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Prepare Extraction": {
+			"main": [
+				[
+					{
+						"node": "AI Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"AI Extraction": {
+			"main": [
+				[
+					{
+						"node": "Validate & Format",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Validate & Format": {
+			"main": [
+				[
+					{
+						"node": "Extraction Success?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Extraction Success?": {
+			"main": [
+				[
+					{
+						"node": "Return Extracted Data",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Return Error",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}
