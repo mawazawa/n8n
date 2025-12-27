@@ -1,0 +1,300 @@
+{
+	"name": "Mother of All Flows - Approval Workflow Engine",
+	"meta": {
+		"description": "Human-in-the-loop automation with multi-level approval, escalation, and delegation"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "approval/request",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-request",
+			"name": "Approval Request",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "approval-request"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and validate approval request\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Validate required fields\nif (!body.type) {\n  throw new Error('Missing required field: type');\n}\nif (!body.requester) {\n  throw new Error('Missing required field: requester');\n}\n\n// Create approval request\nconst request = {\n  id: `apr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  type: body.type,\n  requester: {\n    id: body.requester.id || body.requester,\n    email: body.requester.email || body.requesterEmail,\n    name: body.requester.name || body.requesterName\n  },\n  subject: body.subject || `${body.type} Request`,\n  description: body.description || '',\n  data: body.data || {},\n  priority: body.priority || 'normal',\n  amount: body.amount || null,\n  deadline: body.deadline || null,\n  status: 'pending',\n  createdAt: new Date().toISOString(),\n  approvals: [],\n  currentLevel: 1,\n  escalationCount: 0\n};\n\nreturn [{ json: request }];"
+			},
+			"id": "parse-request",
+			"name": "Parse Request",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Determine approvers based on request type and amount\nconst request = $input.first().json;\n\n// Approval rules (in production, load from database)\nconst approvalRules = {\n  'expense': [\n    { level: 1, threshold: 1000, approvers: ['manager@example.com'] },\n    { level: 2, threshold: 5000, approvers: ['director@example.com'] },\n    { level: 3, threshold: Infinity, approvers: ['cfo@example.com'] }\n  ],\n  'leave': [\n    { level: 1, threshold: 3, approvers: ['manager@example.com'] },\n    { level: 2, threshold: Infinity, approvers: ['hr@example.com'] }\n  ],\n  'purchase': [\n    { level: 1, threshold: 500, approvers: ['team-lead@example.com'] },\n    { level: 2, threshold: 2000, approvers: ['manager@example.com'] },\n    { level: 3, threshold: 10000, approvers: ['director@example.com'] },\n    { level: 4, threshold: Infinity, approvers: ['cfo@example.com'] }\n  ],\n  'default': [\n    { level: 1, threshold: Infinity, approvers: ['admin@example.com'] }\n  ]\n};\n\n// Get applicable rules\nconst rules = approvalRules[request.type] || approvalRules['default'];\nconst amount = request.amount || 0;\n\n// Determine required approval levels\nconst requiredLevels = rules.filter(r => amount <= r.threshold || r.threshold === Infinity)\n  .slice(0, rules.findIndex(r => amount <= r.threshold) + 1 || rules.length);\n\n// Get current level approvers\nconst currentRule = requiredLevels.find(r => r.level === request.currentLevel) || requiredLevels[0];\n\n// Check for delegation/out-of-office (simulated)\nconst delegations = {\n  'manager@example.com': { delegateTo: 'deputy-manager@example.com', until: '2025-12-31' }\n};\n\nconst finalApprovers = currentRule.approvers.map(approver => {\n  const delegation = delegations[approver];\n  if (delegation && new Date(delegation.until) > new Date()) {\n    return delegation.delegateTo;\n  }\n  return approver;\n});\n\nreturn [{\n  json: {\n    ...request,\n    approvalChain: requiredLevels,\n    currentApprovers: finalApprovers,\n    totalLevels: requiredLevels.length,\n    timeoutMinutes: request.priority === 'urgent' ? 60 : 1440 // 1 hour or 24 hours\n  }\n}];"
+			},
+			"id": "determine-approvers",
+			"name": "Determine Approvers",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Store approval request and prepare notifications\nconst request = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize storage\nif (!staticData.approvals) {\n  staticData.approvals = {};\n}\n\n// Store request\nstaticData.approvals[request.id] = {\n  ...request,\n  expiresAt: new Date(Date.now() + request.timeoutMinutes * 60000).toISOString()\n};\n\n// Generate approval links\nconst baseUrl = 'http://localhost:5678/webhook';\nconst approvalLinks = request.currentApprovers.map(approver => ({\n  approver,\n  approveUrl: `${baseUrl}/approval/respond?id=${request.id}&action=approve&approver=${encodeURIComponent(approver)}`,\n  rejectUrl: `${baseUrl}/approval/respond?id=${request.id}&action=reject&approver=${encodeURIComponent(approver)}`,\n  viewUrl: `${baseUrl}/approval/view?id=${request.id}`\n}));\n\nreturn [{\n  json: {\n    ...request,\n    approvalLinks,\n    stored: true\n  }\n}];"
+			},
+			"id": "store-request",
+			"name": "Store & Generate Links",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Split into individual notifications per approver\nconst request = $input.first().json;\n\nreturn request.approvalLinks.map(link => ({\n  json: {\n    request,\n    notification: {\n      to: link.approver,\n      subject: `[Action Required] ${request.subject}`,\n      body: `\nApproval Request: ${request.subject}\n\nRequester: ${request.requester.name || request.requester.email}\nType: ${request.type}\nAmount: ${request.amount ? '$' + request.amount : 'N/A'}\nPriority: ${request.priority}\nLevel: ${request.currentLevel} of ${request.totalLevels}\n\nDescription:\n${request.description}\n\nActions:\n- Approve: ${link.approveUrl}\n- Reject: ${link.rejectUrl}\n- View Details: ${link.viewUrl}\n\nThis request will escalate if not responded to within ${request.timeoutMinutes} minutes.\n      `.trim(),\n      links: link\n    }\n  }\n}));"
+			},
+			"id": "prepare-notifications",
+			"name": "Prepare Notifications",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"fromEmail": "approvals@example.com",
+				"toEmail": "={{ $json.notification.to }}",
+				"subject": "={{ $json.notification.subject }}",
+				"emailType": "text",
+				"text": "={{ $json.notification.body }}"
+			},
+			"id": "send-notification",
+			"name": "Send Notification",
+			"type": "n8n-nodes-base.emailSend",
+			"typeVersion": 2.1,
+			"position": [1100, 300],
+			"credentials": {
+				"smtp": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "SMTP"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Compile response\nconst notifications = $input.all();\nconst request = notifications[0]?.json.request;\n\nreturn [{\n  json: {\n    success: true,\n    requestId: request.id,\n    status: 'pending_approval',\n    currentLevel: request.currentLevel,\n    totalLevels: request.totalLevels,\n    approvers: request.currentApprovers,\n    expiresAt: new Date(Date.now() + request.timeoutMinutes * 60000).toISOString(),\n    message: `Approval request created. ${request.currentApprovers.length} approver(s) notified.`\n  }\n}];"
+			},
+			"id": "compile-response",
+			"name": "Compile Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1320, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-request",
+			"name": "Return Status",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1540, 300]
+		},
+		{
+			"parameters": {
+				"httpMethod": "GET",
+				"path": "approval/respond",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-respond",
+			"name": "Approval Response",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 600],
+			"webhookId": "approval-respond"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process approval response\nconst input = $input.first().json;\nconst query = input.query || {};\nconst staticData = $workflow.staticData;\n\nconst requestId = query.id;\nconst action = query.action;\nconst approver = query.approver;\nconst comment = query.comment || '';\n\nif (!requestId || !action || !approver) {\n  return [{\n    json: {\n      success: false,\n      error: 'Missing required parameters: id, action, approver'\n    }\n  }];\n}\n\n// Get stored request\nconst request = staticData.approvals?.[requestId];\n\nif (!request) {\n  return [{\n    json: {\n      success: false,\n      error: 'Approval request not found or expired'\n    }\n  }];\n}\n\nif (request.status !== 'pending') {\n  return [{\n    json: {\n      success: false,\n      error: `Request already ${request.status}`\n    }\n  }];\n}\n\n// Verify approver is authorized\nif (!request.currentApprovers.includes(approver)) {\n  return [{\n    json: {\n      success: false,\n      error: 'You are not authorized to respond to this request'\n    }\n  }];\n}\n\n// Record the response\nconst response = {\n  approver,\n  action,\n  comment,\n  respondedAt: new Date().toISOString(),\n  level: request.currentLevel\n};\n\nrequest.approvals.push(response);\n\nif (action === 'reject') {\n  request.status = 'rejected';\n  request.rejectedBy = approver;\n  request.rejectedAt = new Date().toISOString();\n} else if (action === 'approve') {\n  if (request.currentLevel >= request.totalLevels) {\n    request.status = 'approved';\n    request.approvedAt = new Date().toISOString();\n  } else {\n    request.currentLevel++;\n    // Would trigger next level notifications here\n  }\n}\n\n// Update stored request\nstaticData.approvals[requestId] = request;\n\nreturn [{\n  json: {\n    success: true,\n    requestId,\n    action,\n    newStatus: request.status,\n    currentLevel: request.currentLevel,\n    message: action === 'approve' \n      ? (request.status === 'approved' ? 'Request fully approved!' : `Approved at level ${request.currentLevel - 1}. Escalating to next level.`)\n      : 'Request rejected.'\n  }\n}];"
+			},
+			"id": "process-response",
+			"name": "Process Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 600]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-approval",
+			"name": "Return Result",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [440, 600]
+		},
+		{
+			"parameters": {
+				"httpMethod": "GET",
+				"path": "approval/status",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-status",
+			"name": "Status Check",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 800],
+			"webhookId": "approval-status"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Get approval status\nconst input = $input.first().json;\nconst query = input.query || {};\nconst staticData = $workflow.staticData;\n\nconst requestId = query.id;\n\nif (!requestId) {\n  // Return all pending approvals\n  const pending = Object.values(staticData.approvals || {})\n    .filter(r => r.status === 'pending');\n  return [{\n    json: {\n      pending,\n      count: pending.length\n    }\n  }];\n}\n\nconst request = staticData.approvals?.[requestId];\n\nif (!request) {\n  return [{\n    json: {\n      success: false,\n      error: 'Approval request not found'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    success: true,\n    request: {\n      id: request.id,\n      type: request.type,\n      subject: request.subject,\n      status: request.status,\n      requester: request.requester,\n      currentLevel: request.currentLevel,\n      totalLevels: request.totalLevels,\n      approvals: request.approvals,\n      createdAt: request.createdAt,\n      expiresAt: request.expiresAt\n    }\n  }\n}];"
+			},
+			"id": "get-status",
+			"name": "Get Status",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 800]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-status",
+			"name": "Return Status",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [440, 800]
+		}
+	],
+	"connections": {
+		"Approval Request": {
+			"main": [
+				[
+					{
+						"node": "Parse Request",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Request": {
+			"main": [
+				[
+					{
+						"node": "Determine Approvers",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Determine Approvers": {
+			"main": [
+				[
+					{
+						"node": "Store & Generate Links",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Store & Generate Links": {
+			"main": [
+				[
+					{
+						"node": "Prepare Notifications",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Prepare Notifications": {
+			"main": [
+				[
+					{
+						"node": "Send Notification",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Send Notification": {
+			"main": [
+				[
+					{
+						"node": "Compile Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Compile Response": {
+			"main": [
+				[
+					{
+						"node": "Return Status",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Approval Response": {
+			"main": [
+				[
+					{
+						"node": "Process Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process Response": {
+			"main": [
+				[
+					{
+						"node": "Return Result",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Status Check": {
+			"main": [
+				[
+					{
+						"node": "Get Status",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Get Status": {
+			"main": [
+				[
+					{
+						"node": "Return Status",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

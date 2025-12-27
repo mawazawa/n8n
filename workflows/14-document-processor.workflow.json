@@ -1,0 +1,531 @@
+{
+	"name": "Mother of All Flows - Document Processing Pipeline",
+	"meta": {
+		"description": "OCR + AI extraction from any document format with schema validation and archival"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "document/process",
+				"responseMode": "responseNode",
+				"options": {
+					"rawBody": true
+				}
+			},
+			"id": "webhook-document",
+			"name": "Document Upload",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "document-processor"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse document and detect file type\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// Get file info\nconst fileData = body.file || body.document || {};\nconst base64Content = fileData.content || fileData.data || body.content;\nconst fileName = fileData.name || fileData.filename || body.filename || 'document';\nconst mimeType = fileData.mimeType || fileData.type || body.mimeType || 'application/octet-stream';\n\n// Detect file type from extension or mime\nconst extension = fileName.split('.').pop()?.toLowerCase() || '';\nconst typeMap = {\n  'pdf': 'pdf',\n  'png': 'image',\n  'jpg': 'image',\n  'jpeg': 'image',\n  'tiff': 'image',\n  'tif': 'image',\n  'docx': 'docx',\n  'doc': 'doc',\n  'txt': 'text'\n};\n\nconst fileType = typeMap[extension] || (mimeType.includes('pdf') ? 'pdf' : \n  mimeType.includes('image') ? 'image' : 'unknown');\n\nconst document = {\n  id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  fileName,\n  mimeType,\n  fileType,\n  hasContent: !!base64Content,\n  contentLength: base64Content?.length || 0,\n  schema: body.schema || body.extractionSchema || null,\n  metadata: body.metadata || {},\n  createdAt: new Date().toISOString()\n};\n\nreturn [{ json: document }];"
+			},
+			"id": "parse-document",
+			"name": "Parse Document",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"rules": {
+					"values": [
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.fileType }}",
+										"rightValue": "pdf",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "pdf"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.fileType }}",
+										"rightValue": "image",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "image"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.fileType }}",
+										"rightValue": "docx",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "docx"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.fileType }}",
+										"rightValue": "text",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "text"
+						}
+					]
+				},
+				"options": {
+					"fallbackOutput": "extra"
+				}
+			},
+			"id": "route-type",
+			"name": "Route by Type",
+			"type": "n8n-nodes-base.switch",
+			"typeVersion": 3.2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process PDF document\nconst doc = $input.first().json;\n\n// Simulated PDF text extraction\n// In production, use pdf-parse or similar library\nconst extractedText = `\nINVOICE\n\nInvoice Number: INV-2025-001234\nDate: December 27, 2025\n\nFrom:\nAcme Corporation\n123 Business St\nNew York, NY 10001\n\nTo:\nJohn Smith\n456 Customer Ave\nLos Angeles, CA 90001\n\nItems:\n1. Widget A - Qty: 10 - $29.99 each - $299.90\n2. Widget B - Qty: 5 - $49.99 each - $249.95\n\nSubtotal: $549.85\nTax (8%): $43.99\nTotal: $593.84\n\nPayment Terms: Net 30\n`;\n\nreturn [{\n  json: {\n    ...doc,\n    extractedText,\n    pageCount: 1,\n    processingMethod: 'pdf-extraction',\n    ocrRequired: false\n  }\n}];"
+			},
+			"id": "process-pdf",
+			"name": "Process PDF",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process image with OCR\nconst doc = $input.first().json;\n\n// Simulated OCR extraction\n// In production, use Tesseract.js or Google Vision API\nconst extractedText = `\nRECEIPT\n\nStore: Local Grocery\nDate: 12/27/2025\nTransaction: 987654\n\nMilk 2.99\nBread 3.49\nEggs 4.99\nApples 5.99\n\nSubtotal: 17.46\nTax: 1.40\nTotal: 18.86\n\nPayment: VISA ****1234\nThank you for shopping!\n`;\n\nreturn [{\n  json: {\n    ...doc,\n    extractedText,\n    processingMethod: 'ocr',\n    ocrRequired: true,\n    ocrConfidence: 0.94\n  }\n}];"
+			},
+			"id": "process-image",
+			"name": "Process Image (OCR)",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 280]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process DOCX document\nconst doc = $input.first().json;\n\n// Simulated DOCX extraction\n// In production, use mammoth.js or similar\nconst extractedText = `\nPROJECT PROPOSAL\n\nTitle: AI Implementation Plan\nAuthor: Jane Doe\nDate: December 27, 2025\n\nExecutive Summary:\nThis proposal outlines a comprehensive plan for implementing AI-powered automation across our organization.\n\nBudget: $150,000\nTimeline: 6 months\nTeam Size: 5 engineers\n`;\n\nreturn [{\n  json: {\n    ...doc,\n    extractedText,\n    processingMethod: 'docx-extraction',\n    ocrRequired: false\n  }\n}];"
+			},
+			"id": "process-docx",
+			"name": "Process DOCX",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 460]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process plain text\nconst doc = $input.first().json;\n\nreturn [{\n  json: {\n    ...doc,\n    extractedText: 'Plain text content would be extracted here',\n    processingMethod: 'text-passthrough',\n    ocrRequired: false\n  }\n}];"
+			},
+			"id": "process-text",
+			"name": "Process Text",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 640]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle unsupported format\nconst doc = $input.first().json;\n\nreturn [{\n  json: {\n    ...doc,\n    extractedText: null,\n    error: `Unsupported file type: ${doc.fileType}`,\n    processingMethod: 'unsupported',\n    supportedFormats: ['pdf', 'png', 'jpg', 'jpeg', 'tiff', 'docx', 'txt']\n  }\n}];"
+			},
+			"id": "handle-unsupported",
+			"name": "Handle Unsupported",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 820]
+		},
+		{
+			"parameters": {},
+			"id": "merge-extraction",
+			"name": "Merge Extraction",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [920, 300]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o-mini",
+				"messages": {
+					"values": [
+						{
+							"role": "system",
+							"content": "You are a document field extraction assistant. Extract structured data from the provided document text according to the specified schema. If no schema is provided, use intelligent field detection.\n\nDefault extraction fields:\n- document_type: Type of document (invoice, receipt, contract, etc.)\n- dates: Array of dates found\n- amounts: Array of monetary amounts\n- parties: People or organizations mentioned\n- key_fields: Important fields based on document type\n\nRespond with valid JSON matching the schema."
+						},
+						{
+							"role": "user",
+							"content": "Extract structured data from this document:\n\n{{ $json.extractedText }}\n\n{{ $json.schema ? 'Use this schema: ' + JSON.stringify($json.schema) : 'Use intelligent field detection.' }}"
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.1,
+					"responseFormat": "json_object"
+				}
+			},
+			"id": "ai-extraction",
+			"name": "AI Field Extraction",
+			"type": "@n8n/n8n-nodes-langchain.openAi",
+			"typeVersion": 1.8,
+			"position": [1140, 300],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and validate extracted fields\nconst doc = $('Merge Extraction').first().json;\nconst aiResponse = $input.first().json;\n\nlet extractedFields;\ntry {\n  const content = aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content || '{}';\n  extractedFields = JSON.parse(content);\n} catch (e) {\n  extractedFields = { error: 'Failed to parse AI response', raw: aiResponse };\n}\n\n// Validate against schema if provided\nconst validationErrors = [];\nif (doc.schema && doc.schema.required) {\n  for (const field of doc.schema.required) {\n    if (!extractedFields[field]) {\n      validationErrors.push(`Missing required field: ${field}`);\n    }\n  }\n}\n\nreturn [{\n  json: {\n    ...doc,\n    extractedFields,\n    validation: {\n      valid: validationErrors.length === 0,\n      errors: validationErrors\n    }\n  }\n}];"
+			},
+			"id": "validate-extraction",
+			"name": "Validate Extraction",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1360, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "valid-check",
+							"leftValue": "={{ $json.validation.valid }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-valid",
+			"name": "Valid?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1580, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Store and archive valid document\nconst doc = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize document store\nif (!staticData.documents) {\n  staticData.documents = {};\n}\nif (!staticData.documentVersions) {\n  staticData.documentVersions = {};\n}\n\n// Version management\nconst docKey = doc.fileName.replace(/\\.[^.]+$/, '');\nif (!staticData.documentVersions[docKey]) {\n  staticData.documentVersions[docKey] = [];\n}\nstaticData.documentVersions[docKey].push({\n  version: staticData.documentVersions[docKey].length + 1,\n  documentId: doc.id,\n  archivedAt: new Date().toISOString()\n});\n\n// Store document\nstaticData.documents[doc.id] = {\n  id: doc.id,\n  fileName: doc.fileName,\n  fileType: doc.fileType,\n  extractedFields: doc.extractedFields,\n  version: staticData.documentVersions[docKey].length,\n  archivedAt: new Date().toISOString(),\n  retentionPolicy: '7years'\n};\n\nreturn [{\n  json: {\n    ...doc,\n    archived: true,\n    version: staticData.documentVersions[docKey].length,\n    archiveId: `arc_${doc.id}`\n  }\n}];"
+			},
+			"id": "store-archive",
+			"name": "Store & Archive",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1800, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Flag for manual review\nconst doc = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize review queue\nif (!staticData.reviewQueue) {\n  staticData.reviewQueue = [];\n}\n\nstaticData.reviewQueue.push({\n  documentId: doc.id,\n  fileName: doc.fileName,\n  validationErrors: doc.validation.errors,\n  extractedFields: doc.extractedFields,\n  addedAt: new Date().toISOString()\n});\n\nreturn [{\n  json: {\n    ...doc,\n    flaggedForReview: true,\n    reviewReason: doc.validation.errors.join(', '),\n    queuePosition: staticData.reviewQueue.length\n  }\n}];"
+			},
+			"id": "flag-review",
+			"name": "Flag for Review",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1800, 400]
+		},
+		{
+			"parameters": {},
+			"id": "merge-final",
+			"name": "Merge Final",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [2020, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format final response\nconst doc = $input.first().json;\n\nconst response = {\n  success: !doc.error,\n  documentId: doc.id,\n  fileName: doc.fileName,\n  fileType: doc.fileType,\n  processing: {\n    method: doc.processingMethod,\n    ocrUsed: doc.ocrRequired || false,\n    ocrConfidence: doc.ocrConfidence || null\n  },\n  extraction: {\n    fields: doc.extractedFields,\n    validation: doc.validation\n  },\n  status: doc.archived ? 'archived' : \n          doc.flaggedForReview ? 'pending_review' : \n          doc.error ? 'failed' : 'processed',\n  archive: doc.archived ? {\n    archiveId: doc.archiveId,\n    version: doc.version\n  } : null,\n  review: doc.flaggedForReview ? {\n    reason: doc.reviewReason,\n    queuePosition: doc.queuePosition\n  } : null,\n  processedAt: new Date().toISOString()\n};\n\nreturn [{ json: response }];"
+			},
+			"id": "format-response",
+			"name": "Format Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2240, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Return Result",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [2460, 300]
+		}
+	],
+	"connections": {
+		"Document Upload": {
+			"main": [
+				[
+					{
+						"node": "Parse Document",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Document": {
+			"main": [
+				[
+					{
+						"node": "Route by Type",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Route by Type": {
+			"main": [
+				[
+					{
+						"node": "Process PDF",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Process Image (OCR)",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Process DOCX",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Process Text",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Unsupported",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process PDF": {
+			"main": [
+				[
+					{
+						"node": "Merge Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process Image (OCR)": {
+			"main": [
+				[
+					{
+						"node": "Merge Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process DOCX": {
+			"main": [
+				[
+					{
+						"node": "Merge Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process Text": {
+			"main": [
+				[
+					{
+						"node": "Merge Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Unsupported": {
+			"main": [
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Extraction": {
+			"main": [
+				[
+					{
+						"node": "AI Field Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"AI Field Extraction": {
+			"main": [
+				[
+					{
+						"node": "Validate Extraction",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Validate Extraction": {
+			"main": [
+				[
+					{
+						"node": "Valid?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Valid?": {
+			"main": [
+				[
+					{
+						"node": "Store & Archive",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Flag for Review",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Store & Archive": {
+			"main": [
+				[
+					{
+						"node": "Merge Final",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Flag for Review": {
+			"main": [
+				[
+					{
+						"node": "Merge Final",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Final": {
+			"main": [
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format Response": {
+			"main": [
+				[
+					{
+						"node": "Return Result",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

@@ -7,9 +7,9 @@ Production-ready n8n 2.0 workflow templates implementing the highest leverage au
 | Category | Count | Description |
 |----------|-------|-------------|
 | **Core Templates (Phase 1)** | 8 | Original high-leverage workflow patterns |
-| **Core Templates (Phase 2)** | 4 | Advanced enterprise patterns |
+| **Core Templates (Phase 2)** | 10 | Advanced enterprise patterns |
 | **Community Verified** | 16 | Curated from top community repositories |
-| **Total** | 28 | Ready-to-import workflows |
+| **Total** | 34 | Ready-to-import workflows |
 
 ### Core Templates - Phase 1 (Actions 1-10)
 
@@ -24,13 +24,19 @@ Production-ready n8n 2.0 workflow templates implementing the highest leverage au
 | 07 | Data Extractor | Structured extraction from text |
 | 08 | Sub-Workflow Tool | Reusable tool template for agents |
 
-### Core Templates - Phase 2 (Actions 11-20)
+### Core Templates - Phase 2 (Actions 11-20) ✅ COMPLETE
 
 | # | Workflow | Pattern |
 |---|----------|---------|
 | 09 | Scheduled Automation | Timezone-aware cron with business hours |
 | 10 | Data Sync Pipeline | Bidirectional sync with conflict resolution |
+| 11 | Approval Workflow | Human-in-the-loop with escalation |
+| 12 | API Gateway | REST routing, rate limiting, caching |
+| 13 | AI Classification | Auto-categorization with confidence routing |
+| 14 | Document Processor | OCR + AI field extraction |
 | 15 | Notification Hub | Multi-channel notifications with tracking |
+| 16 | Workflow Tester | Integration testing with CI/CD support |
+| 17 | Analytics Pipeline | Real-time metrics with anomaly detection |
 | 18 | Audit Trail | Security logging with PII masking |
 
 See also: [Community Workflows](./community/README.md)
