@@ -7,6 +7,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { createGrokModel, isGrokAvailable } from './grok.js';
 
 export type TaskType =
   | 'discovery'      // Finding relevant nodes/workflows
@@ -14,7 +15,9 @@ export type TaskType =
   | 'configuration'  // Setting parameters and credentials
   | 'response'       // Generating user-facing responses
   | 'complex'        // Complex reasoning tasks
-  | 'simple';        // Simple, fast tasks
+  | 'simple'         // Simple, fast tasks
+  | 'reasoning'      // Advanced reasoning with real-time data
+  | 'analysis';      // Data analysis and insights
 
 export interface TaskModelConfig {
   modelId: string;
@@ -66,6 +69,18 @@ const DEFAULT_TASK_MODELS: Record<TaskType, TaskModelConfig> = {
     provider: 'anthropic',
     maxTokens: 1024,
     temperature: 0.3,
+  },
+  reasoning: {
+    modelId: 'grok-4.2',
+    provider: 'openai', // Using OpenAI client for Grok
+    maxTokens: 4096,
+    temperature: 0.6,
+  },
+  analysis: {
+    modelId: 'gpt-4o',
+    provider: 'openai',
+    maxTokens: 4096,
+    temperature: 0.4,
   },
 };
 
@@ -128,6 +143,37 @@ export function createTaskRouter(config: Partial<TaskRouterConfig> = {}) {
     getModelForTask(taskType: TaskType): BaseChatModel {
       const modelConfig = taskModels[taskType];
       return getModel(modelConfig);
+    },
+
+    /**
+     * Get the optimal model based on task complexity and requirements
+     */
+    selectOptimalModel(options: {
+      taskType: TaskType;
+      complexity?: 'low' | 'medium' | 'high';
+      requiresRealTime?: boolean;
+      maxLatency?: number;
+    }): BaseChatModel {
+      const { taskType, complexity = 'medium', requiresRealTime = false } = options;
+
+      // Prefer Grok for real-time tasks if available
+      if (requiresRealTime && isGrokAvailable()) {
+        return getModel({
+          modelId: 'grok-4.2',
+          provider: 'openai',
+          maxTokens: 4096,
+        });
+      }
+
+      // Adjust model based on complexity
+      if (complexity === 'high') {
+        return this.getModelForTask('complex');
+      } else if (complexity === 'low') {
+        return this.getModelForTask('simple');
+      }
+
+      // Default to task-specific model
+      return this.getModelForTask(taskType);
     },
 
     /**

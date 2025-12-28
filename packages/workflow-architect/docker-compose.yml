@@ -17,6 +17,17 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # Production hardening settings
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - RATE_LIMIT_WINDOW_MS=60000
+      - RATE_LIMIT_MAX_REQUESTS=100
+      - REQUEST_TIMEOUT_MS=30000
+      - ENABLE_METRICS=true
+      - ENABLE_TRACING=${ENABLE_TRACING:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+    volumes:
+      - workflow-architect-logs:/app/logs
+      - workflow-architect-data:/app/data
     depends_on:
       n8n:
         condition: service_healthy
@@ -25,10 +36,29 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
     networks:
       - workflow-architect-network
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: false  # Set to true in production with proper volume mounts
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100M
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
   n8n:
     image: n8nio/n8n:latest
@@ -55,6 +85,10 @@ services:
 
 volumes:
   n8n_data:
+  workflow-architect-logs:
+    driver: local
+  workflow-architect-data:
+    driver: local
 
 networks:
   workflow-architect-network:

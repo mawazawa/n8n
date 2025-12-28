@@ -8,6 +8,19 @@ export enum ErrorCode {
   UNKNOWN = 'UNKNOWN',
   VALIDATION_ERROR = 'VALIDATION_ERROR',
   NOT_FOUND = 'NOT_FOUND',
+  INTERNAL_ERROR = 'INTERNAL_ERROR',
+
+  // Security errors
+  UNAUTHORIZED = 'UNAUTHORIZED',
+  FORBIDDEN = 'FORBIDDEN',
+  INVALID_INPUT = 'INVALID_INPUT',
+  INJECTION_DETECTED = 'INJECTION_DETECTED',
+
+  // Request errors
+  RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
+  REQUEST_TIMEOUT = 'REQUEST_TIMEOUT',
+  BAD_REQUEST = 'BAD_REQUEST',
+  PAYLOAD_TOO_LARGE = 'PAYLOAD_TOO_LARGE',
 
   // n8n errors
   N8N_CONNECTION = 'N8N_CONNECTION',
@@ -35,6 +48,11 @@ export enum ErrorCode {
   // WebSocket errors
   WS_CONNECTION = 'WS_CONNECTION',
   WS_MESSAGE = 'WS_MESSAGE',
+
+  // Service errors
+  SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',
+  DATABASE_ERROR = 'DATABASE_ERROR',
+  EXTERNAL_API_ERROR = 'EXTERNAL_API_ERROR',
 }
 
 export interface ErrorContext {
@@ -123,6 +141,52 @@ export class AgentError extends WorkflowArchitectError {
 }
 
 /**
+ * Security-related error (unauthorized, forbidden, injection)
+ */
+export class SecurityError extends WorkflowArchitectError {
+  constructor(message: string, code: ErrorCode, context: ErrorContext = {}) {
+    super(message, code, context, false);
+    this.name = 'SecurityError';
+  }
+}
+
+/**
+ * Rate limit exceeded error
+ */
+export class RateLimitError extends WorkflowArchitectError {
+  readonly retryAfter?: number;
+
+  constructor(message: string, retryAfter?: number, context: ErrorContext = {}) {
+    super(message, ErrorCode.RATE_LIMIT_EXCEEDED, context, true);
+    this.name = 'RateLimitError';
+    this.retryAfter = retryAfter;
+  }
+}
+
+/**
+ * Request timeout error
+ */
+export class TimeoutError extends WorkflowArchitectError {
+  constructor(message: string, context: ErrorContext = {}) {
+    super(message, ErrorCode.REQUEST_TIMEOUT, context, true);
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * Validation error
+ */
+export class ValidationError extends WorkflowArchitectError {
+  readonly fields?: Record<string, string[]>;
+
+  constructor(message: string, fields?: Record<string, string[]>, context: ErrorContext = {}) {
+    super(message, ErrorCode.VALIDATION_ERROR, { ...context, fields }, true);
+    this.name = 'ValidationError';
+    this.fields = fields;
+  }
+}
+
+/**
  * Wrap unknown errors into WorkflowArchitectError
  */
 export function wrapError(error: unknown, defaultMessage = 'An unexpected error occurred'): WorkflowArchitectError {
@@ -167,7 +231,23 @@ export function getUserMessage(error: unknown): string {
       case ErrorCode.MODEL_CONTEXT_LIMIT:
         return 'Request too large. Please try with a shorter message.';
       case ErrorCode.AGENT_TIMEOUT:
+      case ErrorCode.REQUEST_TIMEOUT:
         return 'Request timed out. Please try again.';
+      case ErrorCode.RATE_LIMIT_EXCEEDED:
+        return 'Rate limit exceeded. Please slow down your requests.';
+      case ErrorCode.UNAUTHORIZED:
+        return 'Authentication required. Please log in.';
+      case ErrorCode.FORBIDDEN:
+        return 'You do not have permission to perform this action.';
+      case ErrorCode.INVALID_INPUT:
+      case ErrorCode.VALIDATION_ERROR:
+        return 'Invalid input. Please check your data and try again.';
+      case ErrorCode.INJECTION_DETECTED:
+        return 'Security violation detected. Request blocked.';
+      case ErrorCode.SERVICE_UNAVAILABLE:
+        return 'Service temporarily unavailable. Please try again later.';
+      case ErrorCode.PAYLOAD_TOO_LARGE:
+        return 'Request payload too large. Please reduce the size.';
       default:
         return error.message;
     }
@@ -178,4 +258,42 @@ export function getUserMessage(error: unknown): string {
   }
 
   return 'An unexpected error occurred. Please try again.';
+}
+
+/**
+ * Get HTTP status code from error
+ */
+export function getHttpStatusCode(error: unknown): number {
+  if (error instanceof WorkflowArchitectError) {
+    switch (error.code) {
+      case ErrorCode.VALIDATION_ERROR:
+      case ErrorCode.INVALID_INPUT:
+      case ErrorCode.BAD_REQUEST:
+        return 400;
+      case ErrorCode.UNAUTHORIZED:
+      case ErrorCode.N8N_AUTH:
+        return 401;
+      case ErrorCode.FORBIDDEN:
+        return 403;
+      case ErrorCode.NOT_FOUND:
+        return 404;
+      case ErrorCode.REQUEST_TIMEOUT:
+      case ErrorCode.AGENT_TIMEOUT:
+        return 408;
+      case ErrorCode.PAYLOAD_TOO_LARGE:
+        return 413;
+      case ErrorCode.RATE_LIMIT_EXCEEDED:
+      case ErrorCode.MODEL_RATE_LIMIT:
+        return 429;
+      case ErrorCode.INTERNAL_ERROR:
+      case ErrorCode.UNKNOWN:
+        return 500;
+      case ErrorCode.SERVICE_UNAVAILABLE:
+        return 503;
+      default:
+        return 500;
+    }
+  }
+
+  return 500;
 }

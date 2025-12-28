@@ -10,6 +10,8 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { WorkflowBuilderStateType, SimpleWorkflow } from '../state.js';
 import type { CoordinationLogEntry } from '../../types/agent.js';
 import type { WorkflowNode, WorkflowConnections } from '../../types/workflow.js';
+import type { StreamEmitter } from '../../types/streaming.js';
+import { events } from '../../types/streaming.js';
 
 const BUILDER_PROMPT = `You are a builder agent that creates n8n workflow structures.
 
@@ -66,17 +68,28 @@ const BuilderOutputSchema = z.object({
   reasoning: z.string().describe('Explanation of the workflow structure'),
 });
 
-export function createBuilderAgent(model: BaseChatModel) {
+export function createBuilderAgent(model: BaseChatModel, emitter?: StreamEmitter) {
   const prompt = ChatPromptTemplate.fromTemplate(BUILDER_PROMPT);
   const structuredModel = model.withStructuredOutput(BuilderOutputSchema);
 
   return async (state: WorkflowBuilderStateType): Promise<Partial<WorkflowBuilderStateType>> => {
     console.log('[Builder] Creating workflow structure...');
 
+    // Emit phase start event
+    if (emitter) {
+      emitter.emit(events.phaseStart('builder', 'Creating workflow structure'));
+    }
+
     // Get discovery context
     const discoveryContext = state.discoveryContext;
     if (!discoveryContext || discoveryContext.nodesFound.length === 0) {
       console.log('[Builder] No nodes to build');
+
+      // Emit phase end event
+      if (emitter) {
+        emitter.emit(events.phaseEnd('builder', true));
+      }
+
       return {
         coordinationLog: [{
           phase: 'builder',
@@ -117,18 +130,27 @@ export function createBuilderAgent(model: BaseChatModel) {
 
     console.log(`[Builder] Created ${result.nodes.length} nodes with ${result.connections.length} connections`);
 
-    // Convert result to workflow format
-    const nodes: WorkflowNode[] = result.nodes.map(n => ({
-      id: n.id || uuid(),
-      name: n.name,
-      type: n.type,
-      typeVersion: n.typeVersion,
-      position: n.position,
-      parameters: n.parameters as Record<string, unknown>,
-    }));
+    // Convert result to workflow format and emit events
+    const nodes: WorkflowNode[] = result.nodes.map((n, index) => {
+      const node: WorkflowNode = {
+        id: n.id || uuid(),
+        name: n.name,
+        type: n.type,
+        typeVersion: n.typeVersion,
+        position: n.position,
+        parameters: n.parameters as Record<string, unknown>,
+      };
 
-    // Build connections object
-    const connections = buildConnections(result.connections, nodes);
+      // Emit node_added event
+      if (emitter) {
+        emitter.emit(events.nodeAdded(node, index, result.nodes.length));
+      }
+
+      return node;
+    });
+
+    // Build connections object and emit events
+    const connections = buildConnections(result.connections, nodes, emitter);
 
     // Merge with existing workflow
     const workflowJSON: SimpleWorkflow = {
@@ -150,6 +172,11 @@ export function createBuilderAgent(model: BaseChatModel) {
       },
     };
 
+    // Emit phase end event
+    if (emitter) {
+      emitter.emit(events.phaseEnd('builder', true));
+    }
+
     return {
       workflowJSON,
       coordinationLog: [logEntry],
@@ -160,7 +187,8 @@ export function createBuilderAgent(model: BaseChatModel) {
 
 function buildConnections(
   connections: z.infer<typeof ConnectionSchema>[],
-  nodes: WorkflowNode[]
+  nodes: WorkflowNode[],
+  emitter?: StreamEmitter
 ): WorkflowConnections {
   const result: WorkflowConnections = {};
 
@@ -190,6 +218,11 @@ function buildConnections(
       type: conn.connectionType,
       index: conn.targetInput,
     });
+
+    // Emit connection_added event
+    if (emitter) {
+      emitter.emit(events.connectionAdded(sourceName, targetName, conn.connectionType));
+    }
   }
 
   return result;

@@ -4,11 +4,16 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.0';
-
-const EMBEDDING_MODEL = 'text-embedding-3-small';
-const EMBEDDING_DIMENSIONS = 1536;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1000;
+import {
+  EMBEDDING_CONFIG,
+  ENV_KEYS,
+  EMBEDDING_STATUS,
+  ERROR_MESSAGES,
+  OPENAI_CONFIG,
+  validateEnvironment,
+  getEmbeddingVersion,
+} from './config.ts';
+import { fetchWithRetry, withRetry } from './retry.ts';
 
 interface EmbeddingRequest {
   workflow_id: string;
@@ -29,41 +34,46 @@ interface WebhookPayload {
   old_record?: Record<string, unknown>;
 }
 
-// Generate embedding using OpenAI API
-async function generateEmbedding(text: string, retryCount = 0): Promise<number[]> {
-  const apiKey = Deno.env.get('OPENAI_API_KEY');
+// Generate embedding using OpenAI API with retry logic
+async function generateEmbedding(text: string): Promise<number[]> {
+  const apiKey = Deno.env.get(ENV_KEYS.OPENAI_API_KEY);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set');
+    throw new Error(ERROR_MESSAGES.MISSING_API_KEY);
   }
 
-  try {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: EMBEDDING_MODEL,
-        input: text,
-        dimensions: EMBEDDING_DIMENSIONS,
-      }),
-    });
+  return withRetry(
+    async () => {
+      const response = await fetchWithRetry(
+        OPENAI_CONFIG.endpoint,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            ...OPENAI_CONFIG.headers,
+          },
+          body: JSON.stringify({
+            model: EMBEDDING_CONFIG.model,
+            input: text,
+            dimensions: EMBEDDING_CONFIG.dimensions,
+          }),
+        },
+        {
+          maxRetries: EMBEDDING_CONFIG.maxRetries,
+          baseDelay: EMBEDDING_CONFIG.retryDelayMs,
+          onRetry: (error, attempt) => {
+            console.log(`Retry attempt ${attempt} for embedding generation:`, error.message);
+          },
+        }
+      );
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      const data = await response.json();
+      return data.data[0].embedding;
+    },
+    {
+      maxRetries: EMBEDDING_CONFIG.maxRetries,
+      baseDelay: EMBEDDING_CONFIG.retryDelayMs,
     }
-
-    const data = await response.json();
-    return data.data[0].embedding;
-  } catch (error) {
-    if (retryCount < MAX_RETRIES) {
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * Math.pow(2, retryCount)));
-      return generateEmbedding(text, retryCount + 1);
-    }
-    throw error;
-  }
+  );
 }
 
 // Generate semantic content from workflow
@@ -99,41 +109,60 @@ async function processWorkflow(
   workflowId: string,
   record: WebhookPayload['record'],
 ): Promise<void> {
+  const embeddingVersion = getEmbeddingVersion();
+
   try {
-    // Update status to processing
-    await supabase
-      .from('workflow_examples')
-      .update({ embedding_status: 'processing' })
-      .eq('id', workflowId);
+    // Update status to processing using the new function
+    await supabase.rpc('update_embedding_status', {
+      p_workflow_id: workflowId,
+      p_status: EMBEDDING_STATUS.PROCESSING,
+      p_model: EMBEDDING_CONFIG.model,
+      p_version: embeddingVersion,
+    });
+
+    // Increment retry counter if this is a retry
+    if (record.embedding_status === EMBEDDING_STATUS.FAILED) {
+      await supabase.rpc('increment_embedding_retry', {
+        p_workflow_id: workflowId,
+      });
+    }
 
     // Generate semantic content
     const semanticContent = generateSemanticContent(record);
 
-    // Generate embedding
+    // Generate embedding with retry
     const embedding = await generateEmbedding(semanticContent);
 
-    // Update workflow with embedding
+    // Update workflow with embedding using new function
+    await supabase.rpc('update_embedding_status', {
+      p_workflow_id: workflowId,
+      p_status: EMBEDDING_STATUS.COMPLETED,
+      p_model: EMBEDDING_CONFIG.model,
+      p_version: embeddingVersion,
+    });
+
+    // Update the actual embedding vector
     const { error } = await supabase
       .from('workflow_examples')
-      .update({
-        embedding,
-        embedding_status: 'completed',
-        embedding_model: EMBEDDING_MODEL,
-      })
+      .update({ embedding })
       .eq('id', workflowId);
 
     if (error) {
-      throw new Error(`Failed to update workflow: ${error.message}`);
+      throw new Error(`${ERROR_MESSAGES.UPDATE_FAILED}: ${error.message}`);
     }
 
     // Also generate node-level embeddings
     await generateNodeEmbeddings(supabase, workflowId, record.workflow_json);
   } catch (error) {
-    // Update status to failed
-    await supabase
-      .from('workflow_examples')
-      .update({ embedding_status: 'failed' })
-      .eq('id', workflowId);
+    const err = error as Error;
+
+    // Update status to failed using new function with error details
+    await supabase.rpc('update_embedding_status', {
+      p_workflow_id: workflowId,
+      p_status: EMBEDDING_STATUS.FAILED,
+      p_error: err.message,
+      p_error_code: err.name || 'UNKNOWN_ERROR',
+    });
 
     throw error;
   }
@@ -239,13 +268,15 @@ serve(async (req) => {
       });
     }
 
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-
-    if (!supabaseUrl || !supabaseKey) {
-      throw new Error('Missing Supabase configuration');
+    // Validate environment
+    const envValidation = validateEnvironment();
+    if (!envValidation.valid) {
+      throw new Error(`Environment validation failed: ${envValidation.errors.join(', ')}`);
     }
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get(ENV_KEYS.SUPABASE_URL)!;
+    const supabaseKey = Deno.env.get(ENV_KEYS.SUPABASE_SERVICE_ROLE_KEY)!;
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 

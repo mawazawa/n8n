@@ -4,9 +4,17 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.0';
 
-const EMBEDDING_MODEL = 'text-embedding-3-small';
-const BATCH_SIZE = 10; // Process 10 workflows at a time
-const RATE_LIMIT_DELAY_MS = 100; // Delay between API calls
+// Import shared config and retry logic from generate-embedding
+import {
+  EMBEDDING_CONFIG,
+  ENV_KEYS,
+  EMBEDDING_STATUS,
+  ERROR_MESSAGES,
+  OPENAI_CONFIG,
+  validateEnvironment,
+  getEmbeddingVersion,
+} from '../generate-embedding/config.ts';
+import { fetchWithRetry, sleep, processBatchWithRetry } from '../generate-embedding/retry.ts';
 
 interface BatchRequest {
   status_filter?: 'pending' | 'failed';
@@ -22,57 +30,63 @@ interface WorkflowRecord {
   workflow_json: Record<string, unknown>;
 }
 
-// Generate embedding using OpenAI API
+// Generate embedding using OpenAI API with retry
 async function generateEmbedding(text: string): Promise<number[]> {
-  const apiKey = Deno.env.get('OPENAI_API_KEY');
+  const apiKey = Deno.env.get(ENV_KEYS.OPENAI_API_KEY);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set');
+    throw new Error(ERROR_MESSAGES.MISSING_API_KEY);
   }
 
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+  const response = await fetchWithRetry(
+    OPENAI_CONFIG.endpoint,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...OPENAI_CONFIG.headers,
+      },
+      body: JSON.stringify({
+        model: EMBEDDING_CONFIG.model,
+        input: text,
+        dimensions: EMBEDDING_CONFIG.dimensions,
+      }),
     },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input: text,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${error}`);
-  }
+    {
+      maxRetries: EMBEDDING_CONFIG.maxRetries,
+      baseDelay: EMBEDDING_CONFIG.retryDelayMs,
+    }
+  );
 
   const data = await response.json();
   return data.data[0].embedding;
 }
 
-// Generate batch embeddings (more efficient)
+// Generate batch embeddings (more efficient) with retry
 async function generateBatchEmbeddings(texts: string[]): Promise<number[][]> {
-  const apiKey = Deno.env.get('OPENAI_API_KEY');
+  const apiKey = Deno.env.get(ENV_KEYS.OPENAI_API_KEY);
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set');
+    throw new Error(ERROR_MESSAGES.MISSING_API_KEY);
   }
 
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+  const response = await fetchWithRetry(
+    OPENAI_CONFIG.endpoint,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...OPENAI_CONFIG.headers,
+      },
+      body: JSON.stringify({
+        model: EMBEDDING_CONFIG.model,
+        input: texts,
+        dimensions: EMBEDDING_CONFIG.dimensions,
+      }),
     },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input: texts,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${error}`);
-  }
+    {
+      maxRetries: EMBEDDING_CONFIG.maxRetries,
+      baseDelay: EMBEDDING_CONFIG.retryDelayMs,
+    }
+  );
 
   const data = await response.json();
   return data.data.map((d: { embedding: number[] }) => d.embedding);
@@ -111,19 +125,22 @@ serve(async (req) => {
       });
     }
 
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-
-    if (!supabaseUrl || !supabaseKey) {
-      throw new Error('Missing Supabase configuration');
+    // Validate environment
+    const envValidation = validateEnvironment();
+    if (!envValidation.valid) {
+      throw new Error(`Environment validation failed: ${envValidation.errors.join(', ')}`);
     }
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get(ENV_KEYS.SUPABASE_URL)!;
+    const supabaseKey = Deno.env.get(ENV_KEYS.SUPABASE_SERVICE_ROLE_KEY)!;
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     const body = (await req.json()) as BatchRequest;
 
     const statusFilter = body.status_filter || 'pending';
     const limit = body.limit || 100;
+    const embeddingVersion = getEmbeddingVersion();
 
     // Fetch workflows to process
     let query = supabase
@@ -159,23 +176,24 @@ serve(async (req) => {
     };
 
     // Process in batches
-    for (let i = 0; i < workflows.length; i += BATCH_SIZE) {
-      const batch = workflows.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < workflows.length; i += EMBEDDING_CONFIG.batchSize) {
+      const batch = workflows.slice(i, i + EMBEDDING_CONFIG.batchSize);
 
-      // Mark all as processing
-      await supabase
-        .from('workflow_examples')
-        .update({ embedding_status: 'processing' })
-        .in(
-          'id',
-          batch.map((w) => w.id),
-        );
+      // Mark all as processing using new function
+      for (const workflow of batch) {
+        await supabase.rpc('update_embedding_status', {
+          p_workflow_id: workflow.id,
+          p_status: EMBEDDING_STATUS.PROCESSING,
+          p_model: EMBEDDING_CONFIG.model,
+          p_version: embeddingVersion,
+        });
+      }
 
       try {
         // Generate semantic content for all
         const texts = batch.map((w) => generateSemanticContent(w));
 
-        // Generate embeddings in batch
+        // Generate embeddings in batch with retry
         const embeddings = await generateBatchEmbeddings(texts);
 
         // Update each workflow
@@ -183,61 +201,82 @@ serve(async (req) => {
           const workflow = batch[j];
           const embedding = embeddings[j];
 
-          const { error: updateError } = await supabase
-            .from('workflow_examples')
-            .update({
-              embedding,
-              embedding_status: 'completed',
-              embedding_model: EMBEDDING_MODEL,
-            })
-            .eq('id', workflow.id);
+          try {
+            // Update with new function
+            await supabase.rpc('update_embedding_status', {
+              p_workflow_id: workflow.id,
+              p_status: EMBEDDING_STATUS.COMPLETED,
+              p_model: EMBEDDING_CONFIG.model,
+              p_version: embeddingVersion,
+            });
 
-          if (updateError) {
-            results.failed++;
-            results.errors.push(`${workflow.id}: ${updateError.message}`);
-
-            await supabase
+            // Update the actual embedding vector
+            const { error: updateError } = await supabase
               .from('workflow_examples')
-              .update({ embedding_status: 'failed' })
+              .update({ embedding })
               .eq('id', workflow.id);
-          } else {
+
+            if (updateError) {
+              throw updateError;
+            }
+
             results.processed++;
+          } catch (error) {
+            const err = error as Error;
+            results.failed++;
+            results.errors.push(`${workflow.id}: ${err.message}`);
+
+            await supabase.rpc('update_embedding_status', {
+              p_workflow_id: workflow.id,
+              p_status: EMBEDDING_STATUS.FAILED,
+              p_error: err.message,
+              p_error_code: err.name || 'BATCH_UPDATE_ERROR',
+            });
           }
         }
       } catch (batchError) {
-        // If batch fails, try individually
+        const batchErr = batchError as Error;
+        console.error('Batch embedding failed, falling back to individual processing:', batchErr.message);
+
+        // If batch fails, try individually with retry
         for (const workflow of batch) {
           try {
             const text = generateSemanticContent(workflow);
             const embedding = await generateEmbedding(text);
 
+            await supabase.rpc('update_embedding_status', {
+              p_workflow_id: workflow.id,
+              p_status: EMBEDDING_STATUS.COMPLETED,
+              p_model: EMBEDDING_CONFIG.model,
+              p_version: embeddingVersion,
+            });
+
             await supabase
               .from('workflow_examples')
-              .update({
-                embedding,
-                embedding_status: 'completed',
-                embedding_model: EMBEDDING_MODEL,
-              })
+              .update({ embedding })
               .eq('id', workflow.id);
 
             results.processed++;
           } catch (error) {
+            const err = error as Error;
             results.failed++;
-            results.errors.push(`${workflow.id}: ${error.message}`);
+            results.errors.push(`${workflow.id}: ${err.message}`);
 
-            await supabase
-              .from('workflow_examples')
-              .update({ embedding_status: 'failed' })
-              .eq('id', workflow.id);
+            await supabase.rpc('update_embedding_status', {
+              p_workflow_id: workflow.id,
+              p_status: EMBEDDING_STATUS.FAILED,
+              p_error: err.message,
+              p_error_code: err.name || 'INDIVIDUAL_ERROR',
+            });
           }
 
           // Rate limit
-          await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
+          await sleep(EMBEDDING_CONFIG.rateLimitDelay);
         }
       }
 
       // Rate limit between batches
-      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY_MS * 2));
+      await sleep(EMBEDDING_CONFIG.rateLimitDelay * 2);
     }
 
     return new Response(

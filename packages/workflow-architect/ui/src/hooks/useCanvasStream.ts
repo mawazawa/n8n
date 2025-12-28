@@ -44,10 +44,15 @@ export interface UseCanvasStreamOptions {
   wsUrl?: string;
   sessionId?: string;
   autoReconnect?: boolean;
+  maxReconnectAttempts?: number;
+  reconnectDelay?: number;
+  maxReconnectDelay?: number;
   onNodeAdded?: (node: CanvasNode) => void;
   onConnectionAdded?: (connection: CanvasConnection) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
+  onReconnecting?: (attempt: number) => void;
+  onReconnected?: () => void;
 }
 
 export interface UseCanvasStreamReturn {
@@ -57,9 +62,12 @@ export interface UseCanvasStreamReturn {
   progress: { current: number; total: number } | null;
   isConnected: boolean;
   isBuilding: boolean;
+  isReconnecting: boolean;
+  reconnectAttempt: number;
   error: Error | null;
   connect: () => void;
   disconnect: () => void;
+  clearState: () => void;
 }
 
 export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvasStreamReturn {
@@ -67,10 +75,15 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
     wsUrl = `ws://${window.location.host}/ws`,
     sessionId,
     autoReconnect = true,
+    maxReconnectAttempts = 10,
+    reconnectDelay = 1000,
+    maxReconnectDelay = 30000,
     onNodeAdded,
     onConnectionAdded,
     onComplete,
     onError,
+    onReconnecting,
+    onReconnected,
   } = options;
 
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
@@ -79,11 +92,15 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [error, setError] = useState<Error | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const eventHistoryRef = useRef<StreamEvent[]>([]);
+  const lastEventTimestampRef = useRef<number>(0);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -98,9 +115,23 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
 
       ws.onopen = () => {
         setIsConnected(true);
+        setIsReconnecting(false);
         setError(null);
+        setReconnectAttempt(0);
         reconnectAttemptsRef.current = 0;
         console.log('[Canvas] WebSocket connected');
+
+        // Request state recovery if reconnecting
+        if (lastEventTimestampRef.current > 0) {
+          ws.send(
+            JSON.stringify({
+              type: 'recover_state',
+              lastEventTimestamp: lastEventTimestampRef.current,
+              sessionId,
+            })
+          );
+          onReconnected?.();
+        }
       };
 
       ws.onclose = () => {
@@ -108,12 +139,25 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
         wsRef.current = null;
 
         // Auto-reconnect with exponential backoff
-        if (autoReconnect && reconnectAttemptsRef.current < 5) {
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 10000);
+        if (autoReconnect && reconnectAttemptsRef.current < maxReconnectAttempts) {
+          const attempt = reconnectAttemptsRef.current;
+          const delay = Math.min(reconnectDelay * Math.pow(2, attempt), maxReconnectDelay);
+
+          setIsReconnecting(true);
+          setReconnectAttempt(attempt + 1);
+          onReconnecting?.(attempt + 1);
+
+          console.log(`[Canvas] Reconnecting in ${delay}ms (attempt ${attempt + 1}/${maxReconnectAttempts})`);
+
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttemptsRef.current++;
             connect();
           }, delay);
+        } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+          setIsReconnecting(false);
+          const err = new Error('Max reconnection attempts reached');
+          setError(err);
+          onError?.(err);
         }
       };
 
@@ -126,6 +170,16 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as StreamEvent;
+
+          // Store event in history for state recovery
+          eventHistoryRef.current.push(data);
+          lastEventTimestampRef.current = data.timestamp;
+
+          // Keep only last 100 events
+          if (eventHistoryRef.current.length > 100) {
+            eventHistoryRef.current.shift();
+          }
+
           handleEvent(data);
         } catch (err) {
           console.error('[Canvas] Error parsing message:', err);
@@ -136,7 +190,17 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
       setError(error);
       onError?.(error);
     }
-  }, [wsUrl, sessionId, autoReconnect, onError]);
+  }, [
+    wsUrl,
+    sessionId,
+    autoReconnect,
+    maxReconnectAttempts,
+    reconnectDelay,
+    maxReconnectDelay,
+    onError,
+    onReconnecting,
+    onReconnected,
+  ]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -145,6 +209,18 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
     wsRef.current?.close();
     wsRef.current = null;
     setIsConnected(false);
+    setIsReconnecting(false);
+  }, []);
+
+  const clearState = useCallback(() => {
+    setNodes([]);
+    setConnections([]);
+    setCurrentPhase(null);
+    setProgress(null);
+    setIsBuilding(false);
+    setError(null);
+    eventHistoryRef.current = [];
+    lastEventTimestampRef.current = 0;
   }, []);
 
   const handleEvent = useCallback(
@@ -254,8 +330,11 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}): UseCanvas
     progress,
     isConnected,
     isBuilding,
+    isReconnecting,
+    reconnectAttempt,
     error,
     connect,
     disconnect,
+    clearState,
   };
 }

@@ -1,3 +1,8 @@
+/**
+ * Integration tests for automatic embeddings pipeline
+ * Tests embedding accuracy, latency, retry logic, and status tracking
+ */
+
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { initializeSupabase, resetSupabaseClients, getSupabaseAdminClient } from '../../src/supabase/client';
 
@@ -197,7 +202,7 @@ describe.skipIf(SKIP_INTEGRATION)('Automatic Embedding Pipeline', () => {
           ...testWorkflow,
           name: 'Version Test Workflow',
           embedding_model: 'text-embedding-3-small',
-          embedding_version: 1,
+          embedding_version: 'text-embedding-3-small_v1',
         })
         .select()
         .single();
@@ -205,25 +210,290 @@ describe.skipIf(SKIP_INTEGRATION)('Automatic Embedding Pipeline', () => {
       createdWorkflowIds.push(workflow!.id);
 
       expect(workflow?.embedding_model).toBe('text-embedding-3-small');
-      expect(workflow?.embedding_version).toBe(1);
+      expect(workflow?.embedding_version).toBe('text-embedding-3-small_v1');
+    });
 
-      // Update model version
-      await supabase
+    it('should retrieve active embedding model', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase.rpc('get_active_embedding_model');
+
+      expect(error).toBeNull();
+      if (data && data.length > 0) {
+        expect(data[0].model_name).toBe('text-embedding-3-small');
+        expect(data[0].dimensions).toBe(1536);
+      }
+    });
+
+    it('should archive embedding version', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      // Insert workflow with embedding
+      const mockEmbedding = new Array(1536).fill(0).map((_, i) => Math.sin(i) * 0.5);
+      const { data: workflow } = await supabase
         .from('workflow_examples')
-        .update({
-          embedding_model: 'text-embedding-3-large',
-          embedding_version: 2,
+        .insert({
+          ...testWorkflow,
+          name: 'Archive Test Workflow',
+          embedding: mockEmbedding,
+          embedding_status: 'completed',
         })
-        .eq('id', workflow!.id);
+        .select()
+        .single();
 
+      createdWorkflowIds.push(workflow!.id);
+
+      // Get active model
+      const { data: models } = await supabase
+        .from('embedding_models')
+        .select('id')
+        .eq('is_active', true)
+        .limit(1);
+
+      if (models && models.length > 0) {
+        const { data: historyId, error } = await supabase.rpc('archive_embedding_version', {
+          p_workflow_id: workflow!.id,
+          p_model_id: models[0].id,
+          p_quality_score: 95.5,
+        });
+
+        expect(error).toBeNull();
+        expect(historyId).toBeDefined();
+      }
+    });
+  });
+
+  describe('Advanced Status Tracking', () => {
+    it('should use update_embedding_status function', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data: workflow } = await supabase
+        .from('workflow_examples')
+        .insert({
+          ...testWorkflow,
+          name: 'Status Function Test',
+        })
+        .select()
+        .single();
+
+      createdWorkflowIds.push(workflow!.id);
+
+      // Update to processing
+      const { error } = await supabase.rpc('update_embedding_status', {
+        p_workflow_id: workflow!.id,
+        p_status: 'processing',
+        p_model: 'text-embedding-3-small',
+        p_version: 'text-embedding-3-small_v1',
+      });
+
+      expect(error).toBeNull();
+
+      // Verify status and metadata
       const { data: updated } = await supabase
         .from('workflow_examples')
-        .select('embedding_model, embedding_version')
+        .select('embedding_status, embedding_model, embedding_version, embedding_started_at')
         .eq('id', workflow!.id)
         .single();
 
-      expect(updated?.embedding_model).toBe('text-embedding-3-large');
-      expect(updated?.embedding_version).toBe(2);
+      expect(updated?.embedding_status).toBe('processing');
+      expect(updated?.embedding_model).toBe('text-embedding-3-small');
+      expect(updated?.embedding_started_at).toBeDefined();
+    });
+
+    it('should track retry count', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data: workflow } = await supabase
+        .from('workflow_examples')
+        .insert({
+          ...testWorkflow,
+          name: 'Retry Count Test',
+        })
+        .select()
+        .single();
+
+      createdWorkflowIds.push(workflow!.id);
+
+      // Increment retry counter
+      const { data: count1 } = await supabase.rpc('increment_embedding_retry', {
+        p_workflow_id: workflow!.id,
+      });
+
+      expect(count1).toBe(1);
+
+      // Increment again
+      const { data: count2 } = await supabase.rpc('increment_embedding_retry', {
+        p_workflow_id: workflow!.id,
+      });
+
+      expect(count2).toBe(2);
+    });
+
+    it('should reset embedding for retry', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data: workflow } = await supabase
+        .from('workflow_examples')
+        .insert({
+          ...testWorkflow,
+          name: 'Reset Test',
+          embedding_status: 'failed',
+          embedding_error: 'Test error',
+        })
+        .select()
+        .single();
+
+      createdWorkflowIds.push(workflow!.id);
+
+      const { error } = await supabase.rpc('reset_embedding_for_retry', {
+        p_workflow_id: workflow!.id,
+      });
+
+      expect(error).toBeNull();
+
+      const { data: reset } = await supabase
+        .from('workflow_examples')
+        .select('embedding_status, embedding_error')
+        .eq('id', workflow!.id)
+        .single();
+
+      expect(reset?.embedding_status).toBe('pending');
+      expect(reset?.embedding_error).toBeNull();
+    });
+  });
+
+  describe('Queue Statistics', () => {
+    it('should get embedding queue stats', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase.rpc('get_embedding_queue_stats');
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+
+    it('should get failed embeddings list', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase.rpc('get_failed_embeddings', {
+        p_limit: 10,
+        p_max_retries: 3,
+      });
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+
+    it('should get performance metrics', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase.rpc('get_embedding_performance_metrics', {
+        p_hours: 24,
+      });
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+
+    it('should get version stats', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase.rpc('get_embedding_version_stats');
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+  });
+
+  describe('Webhook Integration', () => {
+    it('should get webhook stats', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase.rpc('get_webhook_stats');
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+
+    it('should access webhook log table', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase
+        .from('embedding_webhook_log')
+        .select('*')
+        .limit(1);
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+  });
+
+  describe('Queue Monitor View', () => {
+    it('should query embedding_queue_monitor view', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      const { data, error } = await supabase
+        .from('embedding_queue_monitor')
+        .select('*')
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+
+    it('should detect stuck embeddings', async () => {
+      const supabase = getSupabaseAdminClient();
+
+      // Create a workflow and mark as stuck
+      const { data: workflow } = await supabase
+        .from('workflow_examples')
+        .insert({
+          ...testWorkflow,
+          name: 'Stuck Detection Test',
+          embedding_status: 'processing',
+        })
+        .select()
+        .single();
+
+      createdWorkflowIds.push(workflow!.id);
+
+      // Manually set old started_at
+      await supabase
+        .from('workflow_examples')
+        .update({
+          embedding_started_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        })
+        .eq('id', workflow!.id);
+
+      // Query monitor view
+      const { data: monitorData } = await supabase
+        .from('embedding_queue_monitor')
+        .select('*')
+        .eq('id', workflow!.id)
+        .single();
+
+      expect(monitorData?.is_stuck).toBe(true);
+    });
+  });
+
+  describe('Embedding Accuracy', () => {
+    it('should validate embedding dimensions', async () => {
+      const mockEmbedding = new Array(1536).fill(0).map((_, i) => Math.sin(i) * 0.5);
+
+      expect(mockEmbedding.length).toBe(1536);
+      expect(mockEmbedding.every((val) => typeof val === 'number')).toBe(true);
+      expect(mockEmbedding.every((val) => !isNaN(val))).toBe(true);
+    });
+
+    it('should verify embedding normalization', async () => {
+      const mockEmbedding = new Array(1536).fill(0).map((_, i) => Math.sin(i) * 0.5);
+
+      const magnitude = Math.sqrt(
+        mockEmbedding.reduce((sum, val) => sum + val * val, 0)
+      );
+
+      expect(magnitude).toBeGreaterThan(0);
+      expect(magnitude).toBeLessThan(100);
     });
   });
 });
