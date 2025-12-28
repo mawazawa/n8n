@@ -168,31 +168,36 @@ export class ParallelExecutor extends EventEmitter {
       }
     }
 
-    // Execute tasks with concurrency limit
+    // Execute tasks with concurrency limit using proper completion tracking
     const queue = [...tasks];
-    const executing: Promise<void>[] = [];
+    const executing = new Map<Promise<void>, boolean>();
 
-    while (queue.length > 0 || executing.length > 0) {
+    while (queue.length > 0 || executing.size > 0) {
       // Start new tasks up to concurrency limit
-      while (queue.length > 0 && executing.length < this.maxConcurrency) {
+      while (queue.length > 0 && executing.size < this.maxConcurrency) {
         const task = queue.shift()!;
         const promise = this.executeTask(task, results);
-        executing.push(promise);
+        executing.set(promise, false);
+
+        // Mark promise as completed when it resolves or rejects
+        promise
+          .then(() => executing.set(promise, true))
+          .catch(() => executing.set(promise, true));
       }
 
       // Wait for at least one task to complete
-      if (executing.length > 0) {
-        await Promise.race(executing);
+      if (executing.size > 0) {
+        await Promise.race(Array.from(executing.keys()));
 
-        // Remove completed tasks
-        const stillExecuting = executing.filter(p => {
-          let completed = false;
-          p.then(() => { completed = true; }).catch(() => { completed = true; });
-          return !completed;
-        });
+        // Allow microtasks to run so completion flags are set
+        await Promise.resolve();
 
-        executing.length = 0;
-        executing.push(...stillExecuting);
+        // Remove completed promises from the map
+        for (const [promise, isCompleted] of executing.entries()) {
+          if (isCompleted) {
+            executing.delete(promise);
+          }
+        }
       }
     }
 

@@ -47,16 +47,26 @@ export class CircuitBreaker {
 
 	/**
 	 * Execute with timeout
+	 * Properly cleans up timer to prevent memory leaks
 	 */
 	private async executeWithTimeout<T>(fn: () => Promise<T>): Promise<T> {
-		return Promise.race([
-			fn(),
-			new Promise<T>((_, reject) => {
-				setTimeout(() => {
-					reject(new Error('Request timeout'));
-				}, this.config.timeout);
-			}),
-		]);
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+		const timeoutPromise = new Promise<T>((_, reject) => {
+			timeoutId = setTimeout(() => {
+				reject(new Error('Request timeout'));
+			}, this.config.timeout);
+		});
+
+		try {
+			const result = await Promise.race([fn(), timeoutPromise]);
+			return result;
+		} finally {
+			// Always clear the timeout to prevent memory leaks
+			if (timeoutId !== undefined) {
+				clearTimeout(timeoutId);
+			}
+		}
 	}
 
 	/**

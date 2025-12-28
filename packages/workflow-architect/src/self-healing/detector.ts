@@ -219,6 +219,7 @@ export class AnomalyDetector {
 
   /**
    * Z-score based anomaly detection
+   * Handles edge case where standard deviation is zero (all values identical)
    */
   private zScoreDetection(
     workflowId: string,
@@ -228,6 +229,47 @@ export class AnomalyDetector {
     historical: number[]
   ): DetectionResult {
     const stats = this.calculateStatistics(historical);
+
+    // Guard against division by zero when all historical values are identical
+    // In this case, any deviation from the constant value is anomalous
+    if (stats.stdDev === 0) {
+      const isAnomaly = value !== stats.mean;
+      if (isAnomaly) {
+        const anomaly: Anomaly = {
+          id: uuidv4(),
+          type,
+          workflowId,
+          nodeId,
+          severity: 0.9, // High severity for deviation from constant baseline
+          detectedAt: Date.now(),
+          value,
+          baseline: stats.mean,
+          deviation: value - stats.mean,
+          metadata: {
+            zScore: Infinity,
+            method: 'zscore',
+            stdDev: 0,
+            note: 'All historical values were identical',
+          },
+        };
+
+        return {
+          isAnomaly: true,
+          anomaly: AnomalySchema.parse(anomaly),
+          confidence: 0.95,
+          method: 'zscore',
+          explanation: `Value ${value} deviates from constant baseline ${stats.mean}`,
+        };
+      }
+
+      return {
+        isAnomaly: false,
+        confidence: 1,
+        method: 'zscore',
+        explanation: 'Value matches constant baseline (zero variance in historical data)',
+      };
+    }
+
     const zScore = Math.abs((value - stats.mean) / stats.stdDev);
 
     if (zScore > this.zScoreThreshold) {

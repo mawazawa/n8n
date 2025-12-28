@@ -163,17 +163,29 @@ export abstract class SagaBase {
 
 	/**
 	 * Execute with timeout
+	 * Properly cleans up timer to prevent memory leaks
 	 */
 	private async executeWithTimeout(
 		fn: () => Promise<void>,
 		timeout: number,
 	): Promise<void> {
-		return Promise.race([
-			fn(),
-			new Promise<void>((_, reject) =>
-				setTimeout(() => reject(new Error(`Step timeout after ${timeout}ms`)), timeout),
-			),
-		]);
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+		const timeoutPromise = new Promise<void>((_, reject) => {
+			timeoutId = setTimeout(
+				() => reject(new Error(`Step timeout after ${timeout}ms`)),
+				timeout,
+			);
+		});
+
+		try {
+			await Promise.race([fn(), timeoutPromise]);
+		} finally {
+			// Always clear the timeout to prevent memory leaks
+			if (timeoutId !== undefined) {
+				clearTimeout(timeoutId);
+			}
+		}
 	}
 
 	/**
@@ -234,6 +246,7 @@ export class SagaManager {
 
 	/**
 	 * Start a new saga
+	 * Properly cleans up saga from memory after completion to prevent memory leaks
 	 */
 	async start(saga: SagaBase, timeoutMs?: number): Promise<void> {
 		// Set timeout if provided
@@ -257,6 +270,10 @@ export class SagaManager {
 			// Save failed state
 			await this.saveSaga(saga);
 			throw error;
+		} finally {
+			// Remove saga from in-memory map to prevent memory leaks
+			// The saga state is persisted in the database and can be restored if needed
+			this.sagas.delete(saga.getId());
 		}
 	}
 
