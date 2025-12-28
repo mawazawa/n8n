@@ -12,9 +12,11 @@ import { WorkflowBuilderState, type WorkflowBuilderStateType, applyOperations } 
 import { createSupervisor, createRoutingFunction } from './supervisor.js';
 import { createDiscoveryAgent } from './agents/discovery.js';
 import { createBuilderAgent } from './agents/builder.js';
+import { createConfiguratorAgent } from './agents/configurator.js';
 import { createResponderAgent } from './agents/responder.js';
 import { getModelRouter } from '../models/router.js';
 import { getRAGStore } from '../rag/store.js';
+import { createCredentialsProvider } from '../n8n/credentials.js';
 
 export interface WorkflowArchitectConfig {
   model?: BaseChatModel;
@@ -43,10 +45,18 @@ export function createWorkflowArchitect(config: WorkflowArchitectConfig = {}) {
   // Create checkpointer for session persistence
   const checkpointer = config.checkpointer || new MemorySaver();
 
+  // Create credentials provider
+  const n8nBaseUrl = process.env.N8N_BASE_URL || 'http://localhost:5678';
+  const n8nApiKey = process.env.N8N_API_KEY || '';
+  const getCredentials = n8nApiKey
+    ? createCredentialsProvider(n8nBaseUrl, n8nApiKey)
+    : async () => [];
+
   // Create agents
   const supervisor = createSupervisor(model);
   const discoveryAgent = createDiscoveryAgent(model);
   const builderAgent = createBuilderAgent(model);
+  const configuratorAgent = createConfiguratorAgent(getCredentials);
   const responderAgent = createResponderAgent(model);
 
   // Process operations node
@@ -69,6 +79,7 @@ export function createWorkflowArchitect(config: WorkflowArchitectConfig = {}) {
     .addNode('supervisor', supervisor)
     .addNode('discovery', discoveryAgent)
     .addNode('builder', builderAgent)
+    .addNode('configurator', configuratorAgent)
     .addNode('responder', responderAgent)
     .addNode('process_operations', processOperations)
 
@@ -77,13 +88,14 @@ export function createWorkflowArchitect(config: WorkflowArchitectConfig = {}) {
     .addConditionalEdges('supervisor', createRoutingFunction, {
       discovery: 'discovery',
       builder: 'builder',
-      configurator: 'responder', // Skip configurator for now, go to responder
+      configurator: 'configurator',
       responder: 'responder',
       __end__: END,
     })
     .addEdge('discovery', 'process_operations')
     .addEdge('builder', 'process_operations')
-    .addEdge('process_operations', 'responder')
+    .addEdge('process_operations', 'configurator')
+    .addEdge('configurator', 'responder')
     .addEdge('responder', END);
 
   // Compile with checkpointer

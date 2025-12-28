@@ -124,14 +124,19 @@ const DEFAULT_CONFIG: RouterConfig = {
 export function estimateTokenCount(messages: BaseMessage[]): number {
   let totalChars = 0;
   for (const message of messages) {
-    if (typeof message.content === 'string') {
-      totalChars += message.content.length;
-    } else if (Array.isArray(message.content)) {
-      for (const part of message.content) {
+    const content = message.content;
+    if (typeof content === 'string') {
+      totalChars += content.length;
+    } else if (Array.isArray(content)) {
+      // Cast to unknown[] to handle LangChain's complex content types
+      for (const part of content as unknown[]) {
         if (typeof part === 'string') {
           totalChars += part.length;
-        } else if ('text' in part && typeof part.text === 'string') {
-          totalChars += part.text.length;
+        } else if (part && typeof part === 'object' && 'text' in part) {
+          const text = (part as { text: string }).text;
+          if (typeof text === 'string') {
+            totalChars += text.length;
+          }
         }
       }
     }
