@@ -1,0 +1,188 @@
+{
+  "metadata": {
+    "id": "ai-chatbot-basic",
+    "name": "AI Chatbot - Basic Setup",
+    "description": "Simple AI chatbot using OpenAI with webhook interface",
+    "category": "ai",
+    "tags": ["ai", "chatbot", "openai", "webhook"],
+    "complexity": "intermediate",
+    "estimatedNodes": 4,
+    "author": "n8n Team",
+    "version": "1.0.0",
+    "createdAt": "2025-01-01T00:00:00Z",
+    "updatedAt": "2025-01-01T00:00:00Z"
+  },
+  "variables": [
+    {
+      "name": "webhookPath",
+      "type": "string",
+      "description": "URL path for the chatbot webhook",
+      "required": true,
+      "validation": "^[a-z0-9-]+$"
+    },
+    {
+      "name": "openaiCredential",
+      "type": "credential",
+      "description": "OpenAI API credential ID",
+      "required": true
+    },
+    {
+      "name": "model",
+      "type": "string",
+      "description": "OpenAI model to use",
+      "required": false,
+      "default": "gpt-4"
+    },
+    {
+      "name": "systemPrompt",
+      "type": "string",
+      "description": "System prompt for the AI",
+      "required": false,
+      "default": "You are a helpful assistant."
+    },
+    {
+      "name": "temperature",
+      "type": "number",
+      "description": "Model temperature (0-2)",
+      "required": false,
+      "default": 0.7
+    },
+    {
+      "name": "maxTokens",
+      "type": "number",
+      "description": "Maximum tokens in response",
+      "required": false,
+      "default": 500
+    }
+  ],
+  "prerequisites": [
+    {
+      "type": "credential",
+      "name": "OpenAI",
+      "description": "OpenAI API credentials required"
+    },
+    {
+      "type": "node",
+      "name": "Webhook",
+      "description": "Webhook trigger node"
+    },
+    {
+      "type": "node",
+      "name": "OpenAI",
+      "description": "OpenAI node for chat completion"
+    }
+  ],
+  "workflow": {
+    "name": "AI Chatbot - {{webhookPath}}",
+    "nodes": [
+      {
+        "parameters": {
+          "path": "{{webhookPath}}",
+          "httpMethod": "POST",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 1,
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "resource": "chat",
+          "operation": "complete",
+          "model": "{{model}}",
+          "messages": {
+            "messageValues": [
+              {
+                "role": "system",
+                "content": "{{systemPrompt}}"
+              },
+              {
+                "role": "user",
+                "content": "={{ $json.message }}"
+              }
+            ]
+          },
+          "options": {
+            "temperature": "{{temperature}}",
+            "maxTokens": "{{maxTokens}}"
+          }
+        },
+        "name": "OpenAI Chat",
+        "type": "n8n-nodes-base.openAi",
+        "typeVersion": 1,
+        "position": [450, 300],
+        "credentials": {
+          "openAiApi": {
+            "id": "{{openaiCredential}}",
+            "name": "OpenAI API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "values": {
+            "string": [
+              {
+                "name": "response",
+                "value": "={{ $json.choices[0].message.content }}"
+              }
+            ]
+          }
+        },
+        "name": "Format Response",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 1,
+        "position": [650, 300]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}"
+        },
+        "name": "Respond to Webhook",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [850, 300]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Chat",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Chat": {
+        "main": [
+          [
+            {
+              "node": "Format Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Response": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {}
+  }
+}
