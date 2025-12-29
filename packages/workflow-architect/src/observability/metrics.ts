@@ -182,7 +182,7 @@ export class Histogram extends BaseMetric {
 // ============================================================================
 
 export class Summary extends BaseMetric {
-	private values: number[] = [];
+	private values: Array<{ value: number; timestamp: number }> = [];
 	private sum = 0;
 	private count = 0;
 	private maxAge: number; // milliseconds
@@ -202,13 +202,36 @@ export class Summary extends BaseMetric {
 	}
 
 	observe(value: number): void {
-		this.values.push(value);
+		const now = Date.now();
+
+		// Clean up old values based on maxAge before adding new one
+		this.cleanOldValues(now);
+
+		this.values.push({ value, timestamp: now });
 		this.sum += value;
 		this.count++;
 
-		// Limit size
+		// Limit size as a fallback
 		if (this.values.length > this.maxSize) {
-			this.values.shift();
+			const removed = this.values.shift();
+			if (removed) {
+				this.sum -= removed.value;
+				this.count--;
+			}
+		}
+	}
+
+	/**
+	 * Remove values older than maxAge
+	 */
+	private cleanOldValues(now: number): void {
+		const cutoff = now - this.maxAge;
+		while (this.values.length > 0 && this.values[0].timestamp < cutoff) {
+			const removed = this.values.shift();
+			if (removed) {
+				this.sum -= removed.value;
+				this.count--;
+			}
 		}
 	}
 
@@ -221,9 +244,12 @@ export class Summary extends BaseMetric {
 	}
 
 	quantile(q: number): number {
+		// Clean old values before computing quantile
+		this.cleanOldValues(Date.now());
+
 		if (this.values.length === 0) return 0;
 
-		const sorted = [...this.values].sort((a, b) => a - b);
+		const sorted = [...this.values].map(v => v.value).sort((a, b) => a - b);
 		const index = Math.ceil(sorted.length * q) - 1;
 		return sorted[Math.max(0, index)];
 	}

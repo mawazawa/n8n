@@ -164,8 +164,11 @@ export function useWorkflowStream(options: UseWorkflowStreamOptions = {}): UseWo
 
                   case 'response':
                     assistantContent = event.data as string;
+                    // Use functional update to get latest phase value and avoid stale closure
                     setMessages((prev) => {
                       const existing = prev.find((m) => m.id === assistantMessageId);
+                      // Get current phase from the last phase event we received
+                      const latestPhase = prev.find((m) => m.id === assistantMessageId)?.phase;
                       if (existing) {
                         return prev.map((m) =>
                           m.id === assistantMessageId ? { ...m, content: assistantContent } : m,
@@ -178,7 +181,7 @@ export function useWorkflowStream(options: UseWorkflowStreamOptions = {}): UseWo
                           role: 'assistant' as const,
                           content: assistantContent,
                           timestamp: Date.now(),
-                          phase: currentPhase || undefined,
+                          phase: latestPhase,
                         },
                       ];
                     });

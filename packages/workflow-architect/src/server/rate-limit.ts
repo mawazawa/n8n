@@ -56,6 +56,12 @@ class RateLimiter {
   }
 
   private startCleanup(): void {
+    // Clear existing interval if any to prevent duplicates
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+
     // Clean up old entries every minute
     this.cleanupInterval = setInterval(() => {
       const now = Date.now();
@@ -82,6 +88,14 @@ class RateLimiter {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+  }
+
+  /**
+   * Destroy the rate limiter and free all resources
+   */
+  public destroy(): void {
+    this.stopCleanup();
+    this.store.clear();
   }
 
   public checkLimit(key: string): { allowed: boolean; retryAfter?: number } {

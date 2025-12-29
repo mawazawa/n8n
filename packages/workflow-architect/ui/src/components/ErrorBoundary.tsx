@@ -98,6 +98,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       hasError: false,
       error: null,
       errorInfo: null,
+      errorCount: 0, // Reset error count to prevent stale count on retry
     });
   };
 

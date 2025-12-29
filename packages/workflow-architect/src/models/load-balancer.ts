@@ -42,6 +42,7 @@ export class LoadBalancer {
   private latencyMonitor: ReturnType<typeof getLatencyMonitor>;
   private roundRobinIndex = 0;
   private modelHealth: Map<ModelId, boolean> = new Map();
+  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: Partial<LoadBalancerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -289,13 +290,30 @@ export class LoadBalancer {
 
   /**
    * Start periodic health checks
+   * Stores interval reference for proper cleanup
    */
   private startHealthChecks(): void {
+    // Clear existing interval if any to prevent duplicates
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
     const interval = this.config.healthCheckIntervalMs || 60000;
 
-    setInterval(() => {
+    this.healthCheckInterval = setInterval(() => {
       this.performHealthChecks();
     }, interval);
+  }
+
+  /**
+   * Stop health checks and clean up resources
+   */
+  destroy(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+    this.modelHealth.clear();
   }
 
   /**
@@ -390,9 +408,27 @@ export class LoadBalancer {
 // Singleton instance
 let balancerInstance: LoadBalancer | null = null;
 
+/**
+ * Get or create the load balancer singleton
+ * Note: Config is only used when creating the initial instance.
+ * To update config on an existing instance, use updateConfig() instead.
+ */
 export function getLoadBalancer(config?: Partial<LoadBalancerConfig>): LoadBalancer {
-  if (!balancerInstance || config) {
+  if (!balancerInstance) {
     balancerInstance = new LoadBalancer(config);
+  } else if (config) {
+    // Update config on existing instance instead of recreating
+    balancerInstance.updateConfig(config);
   }
   return balancerInstance;
+}
+
+/**
+ * Reset the load balancer singleton (for testing purposes)
+ */
+export function resetLoadBalancer(): void {
+  if (balancerInstance) {
+    balancerInstance.destroy();
+    balancerInstance = null;
+  }
 }

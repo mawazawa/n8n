@@ -254,12 +254,45 @@ export class Coordinator {
   }
 
   /**
+   * Remove progress callback to prevent memory leaks
+   */
+  offProgress(taskId: string): void {
+    this.progressCallbacks.delete(taskId);
+  }
+
+  /**
+   * Clear all progress callbacks
+   */
+  clearProgressCallbacks(): void {
+    this.progressCallbacks.clear();
+  }
+
+  /**
    * Emit progress update
    */
   private emitProgress(update: ProgressUpdate): void {
     const callback = this.progressCallbacks.get(update.taskId);
     if (callback) {
       callback(update);
+    }
+  }
+
+  /**
+   * Notify completion and cleanup callback
+   */
+  private notifyTaskComplete(taskId: string, success: boolean): void {
+    const callback = this.progressCallbacks.get(taskId);
+    if (callback) {
+      callback({
+        taskId,
+        agentId: '',
+        progress: 1,
+        message: success ? 'Task completed' : 'Task failed',
+        timestamp: Date.now(),
+        metadata: { completed: true, success },
+      });
+      // Clean up callback after task completes
+      this.progressCallbacks.delete(taskId);
     }
   }
 

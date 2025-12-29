@@ -280,6 +280,17 @@ export class SubscriptionManager {
 			return;
 		}
 
+		// Don't process if subscription is in error or stopped state
+		if (currentSubscription.state === 'error' || currentSubscription.state === 'stopped') {
+			// Clear the interval to stop polling
+			const interval = this.activeSubscriptions.get(subscription.id);
+			if (interval) {
+				clearInterval(interval);
+				this.activeSubscriptions.delete(subscription.id);
+			}
+			return;
+		}
+
 		const currentPosition = currentSubscription.position;
 
 		// Get new events
@@ -316,6 +327,13 @@ export class SubscriptionManager {
 					onError(error as Error, event);
 				}
 				await this.updateSubscriptionState(subscription.id, 'error');
+
+				// Stop polling on error by clearing the interval
+				const interval = this.activeSubscriptions.get(subscription.id);
+				if (interval) {
+					clearInterval(interval);
+					this.activeSubscriptions.delete(subscription.id);
+				}
 				return;
 			}
 		}

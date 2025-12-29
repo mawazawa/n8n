@@ -14,8 +14,12 @@ import { allRules, getCriticalRules } from './rules/index.js';
 
 /**
  * Scan history storage (in-memory for now)
+ * Limited to prevent unbounded memory growth
  */
 const scanHistory = new Map<string, ScanResult[]>();
+const MAX_WORKFLOWS_IN_HISTORY = 1000; // Maximum number of workflows to track
+const MAX_SCANS_PER_WORKFLOW = 50; // Maximum scans per workflow
+const workflowAccessOrder: string[] = []; // Track LRU order for eviction
 
 /**
  * SecurityScanner class
@@ -227,18 +231,33 @@ export class SecurityScanner {
   }
 
   /**
-   * Store scan result in history
+   * Store scan result in history with LRU eviction
    */
   private storeScanHistory(workflowId: string, scanResult: ScanResult): void {
     const history = scanHistory.get(workflowId) || [];
     history.unshift(scanResult); // Add to beginning
 
-    // Keep only last 50 scans
-    if (history.length > 50) {
-      history.splice(50);
+    // Keep only last MAX_SCANS_PER_WORKFLOW scans per workflow
+    if (history.length > MAX_SCANS_PER_WORKFLOW) {
+      history.splice(MAX_SCANS_PER_WORKFLOW);
     }
 
     scanHistory.set(workflowId, history);
+
+    // Update LRU order for this workflow
+    const existingIndex = workflowAccessOrder.indexOf(workflowId);
+    if (existingIndex !== -1) {
+      workflowAccessOrder.splice(existingIndex, 1);
+    }
+    workflowAccessOrder.push(workflowId);
+
+    // Evict oldest workflows if we exceed the limit
+    while (scanHistory.size > MAX_WORKFLOWS_IN_HISTORY && workflowAccessOrder.length > 0) {
+      const oldestWorkflowId = workflowAccessOrder.shift();
+      if (oldestWorkflowId) {
+        scanHistory.delete(oldestWorkflowId);
+      }
+    }
   }
 
   /**
