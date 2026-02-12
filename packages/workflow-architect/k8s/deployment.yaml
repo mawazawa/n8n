@@ -1,0 +1,238 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflow-architect
+  namespace: default
+  labels:
+    app: workflow-architect
+    version: v0.1.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: workflow-architect
+  template:
+    metadata:
+      labels:
+        app: workflow-architect
+        version: v0.1.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Security context for pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Service account
+      serviceAccountName: workflow-architect
+
+      # Pod affinity for high availability
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - workflow-architect
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: workflow-architect
+          image: workflow-architect:latest
+          imagePullPolicy: Always
+
+          # Security context for container
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Set to true with proper volume mounts
+            runAsNonRoot: true
+            runAsUser: 1001
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+
+          ports:
+            - name: http
+              containerPort: 3080
+              protocol: TCP
+
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3080"
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: workflow-architect-config
+                  key: log-level
+            - name: RATE_LIMIT_WINDOW_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: workflow-architect-config
+                  key: rate-limit-window-ms
+            - name: RATE_LIMIT_MAX_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: workflow-architect-config
+                  key: rate-limit-max-requests
+            - name: REQUEST_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: workflow-architect-config
+                  key: request-timeout-ms
+            - name: ENABLE_METRICS
+              value: "true"
+            - name: ENABLE_TRACING
+              valueFrom:
+                configMapKeyRef:
+                  name: workflow-architect-config
+                  key: enable-tracing
+            - name: N8N_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: workflow-architect-config
+                  key: n8n-base-url
+            - name: N8N_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: workflow-architect-secrets
+                  key: n8n-api-key
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: workflow-architect-secrets
+                  key: anthropic-api-key
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: workflow-architect-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: SUPABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: workflow-architect-secrets
+                  key: supabase-url
+            - name: SUPABASE_ANON_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: workflow-architect-secrets
+                  key: supabase-anon-key
+            - name: SUPABASE_SERVICE_ROLE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: workflow-architect-secrets
+                  key: supabase-service-role-key
+
+          # Resource limits and requests
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+
+          # Liveness probe
+          livenessProbe:
+            httpGet:
+              path: /liveness
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+
+          # Startup probe (for slow-starting containers)
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 12
+
+          # Volume mounts
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+
+      # Volumes
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: workflow-architect-data
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 100Mi
+
+      # Termination grace period for graceful shutdown
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflow-architect
+  namespace: default
+  labels:
+    app: workflow-architect
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workflow-architect-data
+  namespace: default
+  labels:
+    app: workflow-architect
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard  # Adjust based on your cluster's storage class

@@ -1,0 +1,318 @@
+{
+	"name": "Mother of All Flows - Real-Time Analytics Pipeline",
+	"meta": {
+		"description": "Metrics aggregation with time windows, dashboards, and anomaly detection"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "analytics/event",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-event",
+			"name": "Event Input",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "analytics-event"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and validate analytics event\nconst input = $input.first().json;\nconst body = input.body || input;\n\nif (!body.event && !body.type) {\n  throw new Error('Missing required field: event or type');\n}\n\nconst event = {\n  id: `evt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  type: body.event || body.type,\n  category: body.category || 'general',\n  value: body.value || 1,\n  dimensions: body.dimensions || {},\n  metadata: body.metadata || {},\n  timestamp: new Date().toISOString(),\n  epochMs: Date.now()\n};\n\nreturn [{ json: event }];"
+			},
+			"id": "parse-event",
+			"name": "Parse Event",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Real-time aggregation (last 5 minutes)\nconst event = $input.first().json;\nconst staticData = $workflow.staticData;\nconst now = Date.now();\nconst windowMs = 5 * 60 * 1000; // 5 minutes\n\n// Initialize aggregation buckets\nif (!staticData.realtime) {\n  staticData.realtime = {\n    events: [],\n    counts: {},\n    sums: {},\n    lastCleanup: now\n  };\n}\n\nconst rt = staticData.realtime;\n\n// Cleanup old events (every minute)\nif (now - rt.lastCleanup > 60000) {\n  rt.events = rt.events.filter(e => now - e.epochMs < windowMs);\n  rt.lastCleanup = now;\n}\n\n// Add current event\nrt.events.push(event);\n\n// Update counts\nconst key = `${event.category}:${event.type}`;\nrt.counts[key] = (rt.counts[key] || 0) + 1;\nrt.sums[key] = (rt.sums[key] || 0) + event.value;\n\n// Calculate real-time metrics\nconst recentEvents = rt.events.filter(e => now - e.epochMs < windowMs);\nconst metrics = {\n  window: '5m',\n  eventCount: recentEvents.length,\n  eventsPerMinute: (recentEvents.length / 5).toFixed(2),\n  byCategory: {},\n  byType: {}\n};\n\n// Aggregate by category and type\nfor (const e of recentEvents) {\n  metrics.byCategory[e.category] = (metrics.byCategory[e.category] || 0) + 1;\n  metrics.byType[e.type] = (metrics.byType[e.type] || 0) + 1;\n}\n\nreturn [{\n  json: {\n    event,\n    realtime: metrics\n  }\n}];"
+			},
+			"id": "realtime-aggregate",
+			"name": "Real-time Aggregation",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Hourly roll-up aggregation\nconst data = $input.first().json;\nconst staticData = $workflow.staticData;\nconst now = new Date();\nconst hourKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}`;\n\n// Initialize hourly buckets\nif (!staticData.hourly) {\n  staticData.hourly = {};\n}\n\nif (!staticData.hourly[hourKey]) {\n  staticData.hourly[hourKey] = {\n    hour: hourKey,\n    startTime: new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours()).toISOString(),\n    counts: {},\n    sums: {},\n    uniqueUsers: new Set(),\n    eventCount: 0\n  };\n}\n\nconst bucket = staticData.hourly[hourKey];\nbucket.eventCount++;\n\nconst key = `${data.event.category}:${data.event.type}`;\nbucket.counts[key] = (bucket.counts[key] || 0) + 1;\nbucket.sums[key] = (bucket.sums[key] || 0) + data.event.value;\n\nif (data.event.dimensions?.userId) {\n  bucket.uniqueUsers.add(data.event.dimensions.userId);\n}\n\n// Clean up old hours (keep last 24)\nconst hours = Object.keys(staticData.hourly).sort();\nif (hours.length > 24) {\n  for (const oldHour of hours.slice(0, -24)) {\n    delete staticData.hourly[oldHour];\n  }\n}\n\nreturn [{\n  json: {\n    ...data,\n    hourly: {\n      bucket: hourKey,\n      eventCount: bucket.eventCount,\n      uniqueUsers: bucket.uniqueUsers.size || 0\n    }\n  }\n}];"
+			},
+			"id": "hourly-rollup",
+			"name": "Hourly Roll-up",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Daily roll-up aggregation\nconst data = $input.first().json;\nconst staticData = $workflow.staticData;\nconst now = new Date();\nconst dayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;\n\n// Initialize daily buckets\nif (!staticData.daily) {\n  staticData.daily = {};\n}\n\nif (!staticData.daily[dayKey]) {\n  staticData.daily[dayKey] = {\n    date: dayKey,\n    counts: {},\n    sums: {},\n    uniqueUsers: new Set(),\n    eventCount: 0,\n    peakHour: null,\n    peakHourCount: 0\n  };\n}\n\nconst bucket = staticData.daily[dayKey];\nbucket.eventCount++;\n\nconst key = `${data.event.category}:${data.event.type}`;\nbucket.counts[key] = (bucket.counts[key] || 0) + 1;\nbucket.sums[key] = (bucket.sums[key] || 0) + data.event.value;\n\n// Track peak hour\nconst currentHour = now.getHours();\nif (!bucket.hourlyBreakdown) bucket.hourlyBreakdown = {};\nbucket.hourlyBreakdown[currentHour] = (bucket.hourlyBreakdown[currentHour] || 0) + 1;\n\nif (bucket.hourlyBreakdown[currentHour] > bucket.peakHourCount) {\n  bucket.peakHourCount = bucket.hourlyBreakdown[currentHour];\n  bucket.peakHour = currentHour;\n}\n\n// Clean up old days (keep last 30)\nconst days = Object.keys(staticData.daily).sort();\nif (days.length > 30) {\n  for (const oldDay of days.slice(0, -30)) {\n    delete staticData.daily[oldDay];\n  }\n}\n\nreturn [{\n  json: {\n    ...data,\n    daily: {\n      date: dayKey,\n      eventCount: bucket.eventCount,\n      peakHour: bucket.peakHour\n    }\n  }\n}];"
+			},
+			"id": "daily-rollup",
+			"name": "Daily Roll-up",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Anomaly detection using statistical methods\nconst data = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize anomaly detection state\nif (!staticData.anomalyDetection) {\n  staticData.anomalyDetection = {\n    history: [],\n    mean: 0,\n    stdDev: 0,\n    threshold: 2 // 2 standard deviations\n  };\n}\n\nconst ad = staticData.anomalyDetection;\nconst currentRate = parseFloat(data.realtime.eventsPerMinute);\n\n// Add to history (keep last 100 data points)\nad.history.push(currentRate);\nif (ad.history.length > 100) {\n  ad.history.shift();\n}\n\n// Calculate mean and standard deviation\nconst n = ad.history.length;\nif (n >= 10) {\n  ad.mean = ad.history.reduce((a, b) => a + b, 0) / n;\n  const variance = ad.history.reduce((acc, val) => acc + Math.pow(val - ad.mean, 2), 0) / n;\n  ad.stdDev = Math.sqrt(variance);\n}\n\n// Detect anomaly\nconst anomalies = [];\nif (n >= 10 && ad.stdDev > 0) {\n  const zScore = Math.abs((currentRate - ad.mean) / ad.stdDev);\n  \n  if (zScore > ad.threshold) {\n    anomalies.push({\n      type: currentRate > ad.mean ? 'spike' : 'drop',\n      metric: 'events_per_minute',\n      currentValue: currentRate,\n      expectedValue: ad.mean.toFixed(2),\n      deviation: zScore.toFixed(2),\n      severity: zScore > 3 ? 'critical' : 'warning'\n    });\n  }\n}\n\nreturn [{\n  json: {\n    ...data,\n    anomalyDetection: {\n      enabled: true,\n      dataPoints: n,\n      mean: ad.mean.toFixed(2),\n      stdDev: ad.stdDev.toFixed(2),\n      anomaliesDetected: anomalies.length > 0,\n      anomalies\n    }\n  }\n}];"
+			},
+			"id": "anomaly-detection",
+			"name": "Anomaly Detection",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "anomaly-check",
+							"leftValue": "={{ $json.anomalyDetection.anomaliesDetected }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-anomaly",
+			"name": "Anomaly?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1320, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Generate anomaly alert\nconst data = $input.first().json;\n\nconst alert = {\n  type: 'ANALYTICS_ANOMALY',\n  priority: data.anomalyDetection.anomalies[0]?.severity === 'critical' ? 'P1' : 'P2',\n  alertId: `alert_${Date.now()}`,\n  anomalies: data.anomalyDetection.anomalies,\n  context: {\n    eventType: data.event.type,\n    category: data.event.category,\n    realtimeMetrics: data.realtime\n  },\n  createdAt: new Date().toISOString()\n};\n\nconsole.log('ANOMALY ALERT:', JSON.stringify(alert, null, 2));\n\nreturn [{ json: { ...data, alert } }];"
+			},
+			"id": "generate-alert",
+			"name": "Generate Alert",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1540, 200]
+		},
+		{
+			"parameters": {},
+			"id": "merge-paths",
+			"name": "Merge Paths",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [1760, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format response with dashboard data\nconst data = $input.first().json;\n\nconst response = {\n  success: true,\n  eventId: data.event.id,\n  eventType: data.event.type,\n  \n  metrics: {\n    realtime: data.realtime,\n    hourly: data.hourly,\n    daily: data.daily\n  },\n  \n  anomalyDetection: {\n    status: data.anomalyDetection.enabled ? 'active' : 'inactive',\n    anomaliesDetected: data.anomalyDetection.anomaliesDetected,\n    anomalies: data.anomalyDetection.anomalies || []\n  },\n  \n  alert: data.alert || null,\n  \n  processedAt: new Date().toISOString()\n};\n\nreturn [{ json: response }];"
+			},
+			"id": "format-response",
+			"name": "Format Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1980, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Return Result",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [2200, 300]
+		},
+		{
+			"parameters": {
+				"httpMethod": "GET",
+				"path": "analytics/dashboard",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-dashboard",
+			"name": "Dashboard Request",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 600],
+			"webhookId": "analytics-dashboard"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Generate dashboard data\nconst staticData = $workflow.staticData;\nconst query = $input.first().json.query || {};\n\nconst dashboard = {\n  generatedAt: new Date().toISOString(),\n  \n  realtime: {\n    window: '5m',\n    eventCount: staticData.realtime?.events?.length || 0,\n    eventsPerMinute: staticData.realtime?.events ? \n      ((staticData.realtime.events.filter(e => Date.now() - e.epochMs < 300000).length) / 5).toFixed(2) : 0\n  },\n  \n  hourly: Object.values(staticData.hourly || {})\n    .sort((a, b) => b.hour.localeCompare(a.hour))\n    .slice(0, 24)\n    .map(h => ({\n      hour: h.hour,\n      eventCount: h.eventCount,\n      uniqueUsers: h.uniqueUsers?.size || 0\n    })),\n  \n  daily: Object.values(staticData.daily || {})\n    .sort((a, b) => b.date.localeCompare(a.date))\n    .slice(0, 7)\n    .map(d => ({\n      date: d.date,\n      eventCount: d.eventCount,\n      peakHour: d.peakHour\n    })),\n  \n  anomalyDetection: {\n    mean: staticData.anomalyDetection?.mean?.toFixed(2) || 'N/A',\n    stdDev: staticData.anomalyDetection?.stdDev?.toFixed(2) || 'N/A',\n    dataPoints: staticData.anomalyDetection?.history?.length || 0\n  }\n};\n\nreturn [{ json: dashboard }];"
+			},
+			"id": "generate-dashboard",
+			"name": "Generate Dashboard",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 600]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-dashboard",
+			"name": "Return Dashboard",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [440, 600]
+		}
+	],
+	"connections": {
+		"Event Input": {
+			"main": [
+				[
+					{
+						"node": "Parse Event",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Event": {
+			"main": [
+				[
+					{
+						"node": "Real-time Aggregation",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Real-time Aggregation": {
+			"main": [
+				[
+					{
+						"node": "Hourly Roll-up",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Hourly Roll-up": {
+			"main": [
+				[
+					{
+						"node": "Daily Roll-up",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Daily Roll-up": {
+			"main": [
+				[
+					{
+						"node": "Anomaly Detection",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Anomaly Detection": {
+			"main": [
+				[
+					{
+						"node": "Anomaly?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Anomaly?": {
+			"main": [
+				[
+					{
+						"node": "Generate Alert",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Merge Paths",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Generate Alert": {
+			"main": [
+				[
+					{
+						"node": "Merge Paths",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Paths": {
+			"main": [
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format Response": {
+			"main": [
+				[
+					{
+						"node": "Return Result",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Dashboard Request": {
+			"main": [
+				[
+					{
+						"node": "Generate Dashboard",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Generate Dashboard": {
+			"main": [
+				[
+					{
+						"node": "Return Dashboard",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

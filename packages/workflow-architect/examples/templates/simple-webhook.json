@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "id": "simple-webhook-handler",
+    "name": "Simple Webhook Handler",
+    "description": "Basic webhook receiver that responds with a customizable message",
+    "category": "automation",
+    "tags": ["webhook", "api", "http"],
+    "complexity": "beginner",
+    "estimatedNodes": 2,
+    "author": "n8n Team",
+    "version": "1.0.0",
+    "createdAt": "2025-01-01T00:00:00Z",
+    "updatedAt": "2025-01-01T00:00:00Z"
+  },
+  "variables": [
+    {
+      "name": "webhookPath",
+      "type": "string",
+      "description": "URL path for the webhook endpoint",
+      "required": true,
+      "validation": "^[a-z0-9-]+$"
+    },
+    {
+      "name": "responseMessage",
+      "type": "string",
+      "description": "Message to return in the webhook response",
+      "required": false,
+      "default": "Webhook received successfully"
+    },
+    {
+      "name": "httpMethod",
+      "type": "string",
+      "description": "HTTP method to accept",
+      "required": false,
+      "default": "POST"
+    }
+  ],
+  "prerequisites": [
+    {
+      "type": "node",
+      "name": "Webhook",
+      "description": "Webhook trigger node must be available in n8n"
+    }
+  ],
+  "workflow": {
+    "name": "Webhook Handler - {{webhookPath}}",
+    "nodes": [
+      {
+        "parameters": {
+          "path": "{{webhookPath}}",
+          "httpMethod": "{{httpMethod}}",
+          "responseMode": "onReceived",
+          "responseData": "{{responseMessage}}"
+        },
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 1,
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "values": {
+            "string": [
+              {
+                "name": "status",
+                "value": "success"
+              },
+              {
+                "name": "message",
+                "value": "{{responseMessage}}"
+              }
+            ]
+          }
+        },
+        "name": "Set Response",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 1,
+        "position": [450, 300]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Set Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {}
+  }
+}

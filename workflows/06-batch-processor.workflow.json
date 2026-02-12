@@ -1,0 +1,169 @@
+{
+	"name": "Mother of All Flows - Parallel Batch Processor",
+	"meta": {
+		"description": "High-performance batch processing with parallel execution and error recovery"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "batch-process",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-batch",
+			"name": "Batch Input",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "batch-processor"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Extract items from input\nconst input = $input.first().json;\nconst items = input.body?.items || input.items || [];\nconst batchSize = input.body?.batchSize || input.batchSize || 10;\n\nif (!Array.isArray(items) || items.length === 0) {\n  throw new Error('No items provided. Expected { items: [...] }');\n}\n\n// Store batch config in workflow static data\n$workflow.staticData.totalItems = items.length;\n$workflow.staticData.batchSize = batchSize;\n$workflow.staticData.startTime = Date.now();\n$workflow.staticData.failedItems = [];\n\nreturn items.map((item, index) => ({\n  json: {\n    ...item,\n    _batchIndex: index,\n    _batchTotal: items.length\n  }\n}));"
+			},
+			"id": "prepare-items",
+			"name": "Prepare Items",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"batchSize": "={{ $workflow.staticData.batchSize || 10 }}",
+				"options": {}
+			},
+			"id": "split-batches",
+			"name": "Split Into Batches",
+			"type": "n8n-nodes-base.splitInBatches",
+			"typeVersion": 3,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process each item in the batch\n// This is where your actual processing logic goes\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  try {\n    // Simulate processing (replace with your actual logic)\n    const processed = {\n      ...item.json,\n      processed: true,\n      processedAt: new Date().toISOString(),\n      status: 'success'\n    };\n    results.push({ json: processed });\n  } catch (error) {\n    // Track failed items for retry\n    $workflow.staticData.failedItems.push({\n      item: item.json,\n      error: error.message\n    });\n    results.push({\n      json: {\n        ...item.json,\n        processed: false,\n        status: 'failed',\n        error: error.message\n      }\n    });\n  }\n}\n\nreturn results;"
+			},
+			"id": "process-batch",
+			"name": "Process Batch",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300],
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"value": 100,
+				"unit": "milliseconds"
+			},
+			"id": "rate-limit",
+			"name": "Rate Limit Delay",
+			"type": "n8n-nodes-base.wait",
+			"typeVersion": 1.1,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Compile final results\nconst allItems = $input.all();\nconst staticData = $workflow.staticData;\n\nconst successful = allItems.filter(i => i.json.status === 'success');\nconst failed = allItems.filter(i => i.json.status === 'failed');\n\nconst summary = {\n  totalItems: staticData.totalItems || allItems.length,\n  processed: allItems.length,\n  successful: successful.length,\n  failed: failed.length,\n  successRate: ((successful.length / allItems.length) * 100).toFixed(2) + '%',\n  processingTime: Date.now() - (staticData.startTime || Date.now()) + 'ms',\n  failedItems: failed.map(i => ({\n    index: i.json._batchIndex,\n    error: i.json.error\n  }))\n};\n\n// Clear static data\ndelete $workflow.staticData.totalItems;\ndelete $workflow.staticData.batchSize;\ndelete $workflow.staticData.startTime;\ndelete $workflow.staticData.failedItems;\n\nreturn [{\n  json: {\n    summary,\n    results: allItems.map(i => i.json)\n  }\n}];"
+			},
+			"id": "compile-results",
+			"name": "Compile Results",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-batch",
+			"name": "Return Results",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1320, 300]
+		}
+	],
+	"connections": {
+		"Batch Input": {
+			"main": [
+				[
+					{
+						"node": "Prepare Items",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Prepare Items": {
+			"main": [
+				[
+					{
+						"node": "Split Into Batches",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Split Into Batches": {
+			"main": [
+				[
+					{
+						"node": "Process Batch",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process Batch": {
+			"main": [
+				[
+					{
+						"node": "Rate Limit Delay",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Rate Limit Delay": {
+			"main": [
+				[
+					{
+						"node": "Split Into Batches",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Split Into Batches": {
+			"main": [
+				[],
+				[
+					{
+						"node": "Compile Results",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Compile Results": {
+			"main": [
+				[
+					{
+						"node": "Return Results",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

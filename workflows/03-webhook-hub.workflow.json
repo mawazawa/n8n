@@ -1,0 +1,267 @@
+{
+	"name": "Mother of All Flows - Webhook Hub",
+	"meta": {
+		"description": "Central webhook orchestration hub for routing events to specialized handlers",
+		"templateCredsSetupCompleted": false
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "events",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-hub",
+			"name": "Event Hub Webhook",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "event-hub"
+		},
+		{
+			"parameters": {
+				"rules": {
+					"values": [
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.source }}",
+										"rightValue": "stripe",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "stripe"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.source }}",
+										"rightValue": "github",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "github"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.source }}",
+										"rightValue": "slack",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "slack"
+						}
+					]
+				},
+				"options": {
+					"fallbackOutput": "extra"
+				}
+			},
+			"id": "switch-router",
+			"name": "Route by Source",
+			"type": "n8n-nodes-base.switch",
+			"typeVersion": 3.2,
+			"position": [250, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process Stripe payment events\nconst event = $input.first().json;\nconst eventType = event.type || 'unknown';\n\nreturn [{\n  json: {\n    processed: true,\n    source: 'stripe',\n    eventType,\n    amount: event.data?.object?.amount || 0,\n    currency: event.data?.object?.currency || 'usd',\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "process-stripe",
+			"name": "Process Stripe Events",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [500, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process GitHub webhook events\nconst event = $input.first().json;\nconst action = event.action || 'unknown';\n\nreturn [{\n  json: {\n    processed: true,\n    source: 'github',\n    action,\n    repository: event.repository?.full_name || 'unknown',\n    sender: event.sender?.login || 'unknown',\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "process-github",
+			"name": "Process GitHub Events",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [500, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Process Slack events\nconst event = $input.first().json;\nconst eventType = event.event?.type || 'unknown';\n\nreturn [{\n  json: {\n    processed: true,\n    source: 'slack',\n    eventType,\n    channel: event.event?.channel || 'unknown',\n    user: event.event?.user || 'unknown',\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "process-slack",
+			"name": "Process Slack Events",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [500, 500]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle unknown event sources\nconst event = $input.first().json;\n\nreturn [{\n  json: {\n    processed: false,\n    source: event.source || 'unknown',\n    warning: 'Unrecognized event source',\n    rawEvent: event,\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "process-unknown",
+			"name": "Handle Unknown Events",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [500, 700]
+		},
+		{
+			"parameters": {},
+			"id": "merge-results",
+			"name": "Merge Results",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [750, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond-hub",
+			"name": "Respond to Webhook",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1000, 300]
+		}
+	],
+	"connections": {
+		"Event Hub Webhook": {
+			"main": [
+				[
+					{
+						"node": "Route by Source",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Route by Source": {
+			"main": [
+				[
+					{
+						"node": "Process Stripe Events",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Process GitHub Events",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Process Slack Events",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Unknown Events",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process Stripe Events": {
+			"main": [
+				[
+					{
+						"node": "Merge Results",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process GitHub Events": {
+			"main": [
+				[
+					{
+						"node": "Merge Results",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Process Slack Events": {
+			"main": [
+				[
+					{
+						"node": "Merge Results",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Unknown Events": {
+			"main": [
+				[
+					{
+						"node": "Merge Results",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Results": {
+			"main": [
+				[
+					{
+						"node": "Respond to Webhook",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

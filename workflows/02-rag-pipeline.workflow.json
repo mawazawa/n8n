@@ -1,0 +1,236 @@
+{
+	"name": "Mother of All Flows - RAG Pipeline",
+	"meta": {
+		"description": "Retrieval Augmented Generation pipeline with vector store ingestion and query",
+		"templateCredsSetupCompleted": false
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "ingest-documents",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-ingest-001",
+			"name": "Webhook: Ingest Documents",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 100],
+			"webhookId": "rag-ingest"
+		},
+		{
+			"parameters": {
+				"options": {
+					"systemMessage": "You are a helpful assistant that answers questions based on the provided context. Always cite your sources and acknowledge when information is not available in the knowledge base."
+				}
+			},
+			"id": "chat-trigger-rag",
+			"name": "Chat: Query Knowledge Base",
+			"type": "@n8n/n8n-nodes-langchain.chatTrigger",
+			"typeVersion": 1.1,
+			"position": [0, 500],
+			"webhookId": "rag-query"
+		},
+		{
+			"parameters": {
+				"chunkSize": 1000,
+				"chunkOverlap": 200
+			},
+			"id": "text-splitter-001",
+			"name": "Text Splitter",
+			"type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+			"typeVersion": 1,
+			"position": [250, 100]
+		},
+		{
+			"parameters": {
+				"model": "text-embedding-3-small",
+				"options": {}
+			},
+			"id": "embeddings-001",
+			"name": "OpenAI Embeddings",
+			"type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+			"typeVersion": 1.1,
+			"position": [500, 100],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"mode": "insert",
+				"options": {}
+			},
+			"id": "vector-store-insert",
+			"name": "Vector Store: Insert",
+			"type": "@n8n/n8n-nodes-langchain.vectorStoreInMemory",
+			"typeVersion": 1.1,
+			"position": [750, 100]
+		},
+		{
+			"parameters": {
+				"respondWith": "text",
+				"responseBody": "={{ JSON.stringify({ success: true, message: 'Documents ingested successfully', count: $input.all().length }) }}"
+			},
+			"id": "respond-ingest",
+			"name": "Respond: Ingest Success",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1000, 100]
+		},
+		{
+			"parameters": {
+				"options": {}
+			},
+			"id": "chain-rag",
+			"name": "RAG Chain",
+			"type": "@n8n/n8n-nodes-langchain.chainRetrievalQa",
+			"typeVersion": 1.2,
+			"position": [400, 500]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o-mini",
+				"options": {
+					"temperature": 0.3
+				}
+			},
+			"id": "openai-rag",
+			"name": "OpenAI for RAG",
+			"type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+			"typeVersion": 1.2,
+			"position": [200, 700],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"mode": "retrieve",
+				"topK": 5
+			},
+			"id": "vector-store-retrieve",
+			"name": "Vector Store: Retrieve",
+			"type": "@n8n/n8n-nodes-langchain.vectorStoreInMemory",
+			"typeVersion": 1.1,
+			"position": [400, 700]
+		},
+		{
+			"parameters": {
+				"model": "text-embedding-3-small",
+				"options": {}
+			},
+			"id": "embeddings-query",
+			"name": "Query Embeddings",
+			"type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+			"typeVersion": 1.1,
+			"position": [600, 700],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		}
+	],
+	"connections": {
+		"Webhook: Ingest Documents": {
+			"main": [
+				[
+					{
+						"node": "Text Splitter",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Text Splitter": {
+			"main": [
+				[
+					{
+						"node": "Vector Store: Insert",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"OpenAI Embeddings": {
+			"ai_embedding": [
+				[
+					{
+						"node": "Vector Store: Insert",
+						"type": "ai_embedding",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Vector Store: Insert": {
+			"main": [
+				[
+					{
+						"node": "Respond: Ingest Success",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Chat: Query Knowledge Base": {
+			"main": [
+				[
+					{
+						"node": "RAG Chain",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"OpenAI for RAG": {
+			"ai_languageModel": [
+				[
+					{
+						"node": "RAG Chain",
+						"type": "ai_languageModel",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Vector Store: Retrieve": {
+			"ai_retriever": [
+				[
+					{
+						"node": "RAG Chain",
+						"type": "ai_retriever",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Query Embeddings": {
+			"ai_embedding": [
+				[
+					{
+						"node": "Vector Store: Retrieve",
+						"type": "ai_embedding",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

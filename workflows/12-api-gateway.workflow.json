@@ -1,0 +1,612 @@
+{
+	"name": "Mother of All Flows - Unified API Gateway",
+	"meta": {
+		"description": "Single entry point for all integrations with routing, validation, rate limiting, and caching"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "=POST",
+				"path": "api/v1/*",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-api",
+			"name": "API Endpoint",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "api-gateway"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse request and extract routing information\nconst input = $input.first().json;\nconst headers = input.headers || {};\nconst path = input.params?.['*'] || '';\nconst method = input.method || 'GET';\n\n// Extract API key from header or query\nconst apiKey = headers['x-api-key'] || headers['authorization']?.replace('Bearer ', '') || input.query?.api_key;\n\n// Parse path segments\nconst segments = path.split('/').filter(s => s);\nconst resource = segments[0] || 'root';\nconst resourceId = segments[1] || null;\nconst subResource = segments[2] || null;\n\n// Request context\nconst request = {\n  id: `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  timestamp: new Date().toISOString(),\n  method,\n  path: `/api/v1/${path}`,\n  resource,\n  resourceId,\n  subResource,\n  segments,\n  apiKey,\n  clientIp: headers['x-forwarded-for'] || headers['x-real-ip'] || 'unknown',\n  userAgent: headers['user-agent'] || 'unknown',\n  body: input.body || {},\n  query: input.query || {},\n  headers\n};\n\nreturn [{ json: request }];"
+			},
+			"id": "parse-request",
+			"name": "Parse Request",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Authenticate request\nconst request = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize API keys (in production, load from database)\nif (!staticData.apiKeys) {\n  staticData.apiKeys = {\n    'test-key-123': { name: 'Test App', permissions: ['read', 'write'], rateLimit: 100 },\n    'admin-key-456': { name: 'Admin App', permissions: ['read', 'write', 'admin'], rateLimit: 1000 }\n  };\n}\n\nconst apiKey = request.apiKey;\nconst keyData = staticData.apiKeys[apiKey];\n\nif (!apiKey) {\n  return [{\n    json: {\n      ...request,\n      authenticated: false,\n      error: { code: 401, message: 'Missing API key. Provide X-API-Key header.' }\n    }\n  }];\n}\n\nif (!keyData) {\n  return [{\n    json: {\n      ...request,\n      authenticated: false,\n      error: { code: 401, message: 'Invalid API key.' }\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...request,\n    authenticated: true,\n    client: keyData.name,\n    permissions: keyData.permissions,\n    rateLimit: keyData.rateLimit\n  }\n}];"
+			},
+			"id": "authenticate",
+			"name": "Authenticate",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "auth-check",
+							"leftValue": "={{ $json.authenticated }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-auth",
+			"name": "Authenticated?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Rate limiting check\nconst request = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize rate limit tracking\nif (!staticData.rateLimits) {\n  staticData.rateLimits = {};\n}\n\nconst clientKey = request.apiKey;\nconst now = Date.now();\nconst windowMs = 60000; // 1 minute window\n\n// Clean old entries\nif (!staticData.rateLimits[clientKey]) {\n  staticData.rateLimits[clientKey] = [];\n}\nstaticData.rateLimits[clientKey] = staticData.rateLimits[clientKey].filter(\n  t => now - t < windowMs\n);\n\n// Check rate limit\nconst currentCount = staticData.rateLimits[clientKey].length;\nconst limit = request.rateLimit || 100;\n\nif (currentCount >= limit) {\n  const resetTime = Math.ceil((staticData.rateLimits[clientKey][0] + windowMs - now) / 1000);\n  return [{\n    json: {\n      ...request,\n      rateLimited: true,\n      error: {\n        code: 429,\n        message: 'Rate limit exceeded',\n        retryAfter: resetTime\n      }\n    }\n  }];\n}\n\n// Record this request\nstaticData.rateLimits[clientKey].push(now);\n\nreturn [{\n  json: {\n    ...request,\n    rateLimited: false,\n    rateInfo: {\n      remaining: limit - currentCount - 1,\n      limit,\n      reset: new Date(now + windowMs).toISOString()\n    }\n  }\n}];"
+			},
+			"id": "rate-limit",
+			"name": "Rate Limit",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [880, 200]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "rate-check",
+							"leftValue": "={{ $json.rateLimited }}",
+							"rightValue": false,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-rate",
+			"name": "Within Limit?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1100, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Validate request body against schema\nconst request = $input.first().json;\n\n// Schema definitions per resource/method\nconst schemas = {\n  users: {\n    POST: {\n      required: ['email', 'name'],\n      properties: {\n        email: { type: 'string', pattern: '^[^@]+@[^@]+$' },\n        name: { type: 'string', minLength: 1 },\n        role: { type: 'string', enum: ['user', 'admin'] }\n      }\n    },\n    PUT: {\n      properties: {\n        email: { type: 'string', pattern: '^[^@]+@[^@]+$' },\n        name: { type: 'string', minLength: 1 }\n      }\n    }\n  },\n  orders: {\n    POST: {\n      required: ['items', 'customerId'],\n      properties: {\n        customerId: { type: 'string' },\n        items: { type: 'array', minItems: 1 }\n      }\n    }\n  }\n};\n\nconst schema = schemas[request.resource]?.[request.method];\nconst body = request.body;\nconst errors = [];\n\nif (schema) {\n  // Check required fields\n  if (schema.required) {\n    for (const field of schema.required) {\n      if (body[field] === undefined || body[field] === null) {\n        errors.push(`Missing required field: ${field}`);\n      }\n    }\n  }\n  \n  // Validate properties\n  if (schema.properties && errors.length === 0) {\n    for (const [field, rules] of Object.entries(schema.properties)) {\n      const value = body[field];\n      if (value !== undefined) {\n        if (rules.type === 'string' && typeof value !== 'string') {\n          errors.push(`Field ${field} must be a string`);\n        }\n        if (rules.type === 'array' && !Array.isArray(value)) {\n          errors.push(`Field ${field} must be an array`);\n        }\n        if (rules.minLength && value.length < rules.minLength) {\n          errors.push(`Field ${field} must be at least ${rules.minLength} characters`);\n        }\n        if (rules.enum && !rules.enum.includes(value)) {\n          errors.push(`Field ${field} must be one of: ${rules.enum.join(', ')}`);\n        }\n        if (rules.pattern && !new RegExp(rules.pattern).test(value)) {\n          errors.push(`Field ${field} has invalid format`);\n        }\n      }\n    }\n  }\n}\n\nif (errors.length > 0) {\n  return [{\n    json: {\n      ...request,\n      valid: false,\n      error: { code: 400, message: 'Validation failed', details: errors }\n    }\n  }];\n}\n\nreturn [{ json: { ...request, valid: true } }];"
+			},
+			"id": "validate",
+			"name": "Validate Request",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1320, 100]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "valid-check",
+							"leftValue": "={{ $json.valid }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-valid",
+			"name": "Valid?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1540, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Check cache for GET requests\nconst request = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Only cache GET requests\nif (request.method !== 'GET') {\n  return [{ json: { ...request, cached: false, cacheHit: false } }];\n}\n\n// Initialize cache\nif (!staticData.cache) {\n  staticData.cache = {};\n}\n\n// Generate cache key\nconst cacheKey = `${request.resource}:${request.resourceId || 'list'}:${JSON.stringify(request.query)}`;\nconst cached = staticData.cache[cacheKey];\nconst now = Date.now();\n\n// Check if cache is valid (5 minute TTL)\nif (cached && now - cached.timestamp < 300000) {\n  return [{\n    json: {\n      ...request,\n      cached: true,\n      cacheHit: true,\n      cacheKey,\n      cachedResponse: cached.data\n    }\n  }];\n}\n\nreturn [{ json: { ...request, cached: false, cacheHit: false, cacheKey } }];"
+			},
+			"id": "check-cache",
+			"name": "Check Cache",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1760, 0]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "cache-hit",
+							"leftValue": "={{ $json.cacheHit }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "cache-hit",
+			"name": "Cache Hit?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1980, 0]
+		},
+		{
+			"parameters": {
+				"rules": {
+					"values": [
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.resource }}",
+										"rightValue": "users",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "users"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.resource }}",
+										"rightValue": "orders",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "orders"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.resource }}",
+										"rightValue": "products",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "products"
+						}
+					]
+				},
+				"options": {
+					"fallbackOutput": "extra"
+				}
+			},
+			"id": "route-resource",
+			"name": "Route by Resource",
+			"type": "n8n-nodes-base.switch",
+			"typeVersion": 3.2,
+			"position": [2200, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle /users endpoint\nconst request = $input.first().json;\n\n// Simulated user data (replace with actual database/API calls)\nconst users = [\n  { id: '1', email: 'alice@example.com', name: 'Alice', role: 'admin' },\n  { id: '2', email: 'bob@example.com', name: 'Bob', role: 'user' },\n  { id: '3', email: 'charlie@example.com', name: 'Charlie', role: 'user' }\n];\n\nlet response;\n\nswitch (request.method) {\n  case 'GET':\n    if (request.resourceId) {\n      const user = users.find(u => u.id === request.resourceId);\n      response = user || { error: 'User not found' };\n    } else {\n      response = { users, total: users.length };\n    }\n    break;\n  case 'POST':\n    response = {\n      id: String(Date.now()),\n      ...request.body,\n      createdAt: new Date().toISOString()\n    };\n    break;\n  case 'PUT':\n    response = {\n      id: request.resourceId,\n      ...request.body,\n      updatedAt: new Date().toISOString()\n    };\n    break;\n  case 'DELETE':\n    response = { deleted: true, id: request.resourceId };\n    break;\n  default:\n    response = { error: 'Method not allowed' };\n}\n\nreturn [{ json: { request, response, resource: 'users' } }];"
+			},
+			"id": "handle-users",
+			"name": "Handle Users",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2420, 0]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle /orders endpoint\nconst request = $input.first().json;\n\n// Simulated order data\nconst orders = [\n  { id: 'ord-1', customerId: '1', items: [{sku: 'A1', qty: 2}], status: 'completed' },\n  { id: 'ord-2', customerId: '2', items: [{sku: 'B2', qty: 1}], status: 'pending' }\n];\n\nlet response;\n\nswitch (request.method) {\n  case 'GET':\n    if (request.resourceId) {\n      const order = orders.find(o => o.id === request.resourceId);\n      response = order || { error: 'Order not found' };\n    } else {\n      response = { orders, total: orders.length };\n    }\n    break;\n  case 'POST':\n    response = {\n      id: `ord-${Date.now()}`,\n      ...request.body,\n      status: 'pending',\n      createdAt: new Date().toISOString()\n    };\n    break;\n  default:\n    response = { error: 'Method not allowed' };\n}\n\nreturn [{ json: { request, response, resource: 'orders' } }];"
+			},
+			"id": "handle-orders",
+			"name": "Handle Orders",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2420, 180]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle /products endpoint\nconst request = $input.first().json;\n\n// Simulated product data\nconst products = [\n  { id: 'prod-1', name: 'Widget A', price: 29.99, stock: 100 },\n  { id: 'prod-2', name: 'Widget B', price: 49.99, stock: 50 },\n  { id: 'prod-3', name: 'Widget C', price: 99.99, stock: 25 }\n];\n\nlet response;\n\nswitch (request.method) {\n  case 'GET':\n    if (request.resourceId) {\n      const product = products.find(p => p.id === request.resourceId);\n      response = product || { error: 'Product not found' };\n    } else {\n      response = { products, total: products.length };\n    }\n    break;\n  default:\n    response = { error: 'Method not allowed' };\n}\n\nreturn [{ json: { request, response, resource: 'products' } }];"
+			},
+			"id": "handle-products",
+			"name": "Handle Products",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2420, 360]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Handle unknown resource\nconst request = $input.first().json;\n\nreturn [{\n  json: {\n    request,\n    response: {\n      error: 'Resource not found',\n      availableResources: ['users', 'orders', 'products']\n    },\n    resource: 'unknown'\n  }\n}];"
+			},
+			"id": "handle-unknown",
+			"name": "Handle Unknown",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2420, 540]
+		},
+		{
+			"parameters": {},
+			"id": "merge-handlers",
+			"name": "Merge Handlers",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [2640, 180]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Update cache for successful responses\nconst result = $input.first().json;\nconst staticData = $workflow.staticData;\n\nif (!staticData.cache) {\n  staticData.cache = {};\n}\n\n// Cache successful GET responses\nif (result.request.method === 'GET' && !result.response.error) {\n  const cacheKey = result.request.cacheKey;\n  if (cacheKey) {\n    staticData.cache[cacheKey] = {\n      data: result.response,\n      timestamp: Date.now()\n    };\n  }\n}\n\nreturn [{ json: result }];"
+			},
+			"id": "update-cache",
+			"name": "Update Cache",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [2860, 180]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format final response\nconst input = $input.first().json;\n\nlet statusCode = 200;\nlet response;\n\n// Check for cached response\nif (input.cachedResponse) {\n  response = {\n    data: input.cachedResponse,\n    meta: {\n      cached: true,\n      requestId: input.id\n    }\n  };\n} else if (input.response) {\n  // Normal response\n  if (input.response.error) {\n    statusCode = input.response.error === 'Resource not found' ? 404 : \n                 input.response.error === 'Method not allowed' ? 405 : 400;\n  }\n  response = {\n    data: input.response,\n    meta: {\n      cached: false,\n      requestId: input.request?.id || input.id,\n      resource: input.resource\n    }\n  };\n} else {\n  // Error response\n  statusCode = input.error?.code || 500;\n  response = {\n    error: input.error || { message: 'Internal server error' },\n    meta: {\n      requestId: input.id\n    }\n  };\n}\n\n// Add rate limit headers info\nif (input.rateInfo) {\n  response.meta = response.meta || {};\n  response.meta.rateLimit = input.rateInfo;\n}\n\nreturn [{\n  json: {\n    statusCode,\n    response,\n    headers: {\n      'X-Request-ID': input.request?.id || input.id,\n      'X-RateLimit-Remaining': input.rateInfo?.remaining?.toString() || 'N/A'\n    }\n  }\n}];"
+			},
+			"id": "format-response",
+			"name": "Format Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [3080, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json.response }}",
+				"options": {
+					"responseCode": "={{ $json.statusCode }}",
+					"responseHeaders": {
+						"entries": [
+							{
+								"name": "X-Request-ID",
+								"value": "={{ $json.headers['X-Request-ID'] }}"
+							},
+							{
+								"name": "X-RateLimit-Remaining",
+								"value": "={{ $json.headers['X-RateLimit-Remaining'] }}"
+							}
+						]
+					}
+				}
+			},
+			"id": "respond",
+			"name": "Send Response",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [3300, 300]
+		}
+	],
+	"connections": {
+		"API Endpoint": {
+			"main": [
+				[
+					{
+						"node": "Parse Request",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Request": {
+			"main": [
+				[
+					{
+						"node": "Authenticate",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Authenticate": {
+			"main": [
+				[
+					{
+						"node": "Authenticated?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Authenticated?": {
+			"main": [
+				[
+					{
+						"node": "Rate Limit",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Rate Limit": {
+			"main": [
+				[
+					{
+						"node": "Within Limit?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Within Limit?": {
+			"main": [
+				[
+					{
+						"node": "Validate Request",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Validate Request": {
+			"main": [
+				[
+					{
+						"node": "Valid?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Valid?": {
+			"main": [
+				[
+					{
+						"node": "Check Cache",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Check Cache": {
+			"main": [
+				[
+					{
+						"node": "Cache Hit?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Cache Hit?": {
+			"main": [
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Route by Resource",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Route by Resource": {
+			"main": [
+				[
+					{
+						"node": "Handle Users",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Orders",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Products",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Unknown",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Users": {
+			"main": [
+				[
+					{
+						"node": "Merge Handlers",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Orders": {
+			"main": [
+				[
+					{
+						"node": "Merge Handlers",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Products": {
+			"main": [
+				[
+					{
+						"node": "Merge Handlers",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Unknown": {
+			"main": [
+				[
+					{
+						"node": "Merge Handlers",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Handlers": {
+			"main": [
+				[
+					{
+						"node": "Update Cache",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Update Cache": {
+			"main": [
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format Response": {
+			"main": [
+				[
+					{
+						"node": "Send Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

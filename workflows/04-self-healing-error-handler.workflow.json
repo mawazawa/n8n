@@ -1,0 +1,183 @@
+{
+	"name": "Mother of All Flows - Self-Healing Error Handler",
+	"meta": {
+		"description": "AI-powered error analysis and automatic recovery system",
+		"templateCredsSetupCompleted": false
+	},
+	"nodes": [
+		{
+			"parameters": {},
+			"id": "error-trigger",
+			"name": "On Workflow Error",
+			"type": "n8n-nodes-base.errorTrigger",
+			"typeVersion": 1,
+			"position": [0, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Extract error details for AI analysis\nconst errorData = $input.first().json;\n\nconst errorContext = {\n  workflowName: errorData.workflow?.name || 'Unknown',\n  workflowId: errorData.workflow?.id || 'Unknown',\n  nodeName: errorData.execution?.error?.node?.name || 'Unknown',\n  nodeType: errorData.execution?.error?.node?.type || 'Unknown',\n  errorMessage: errorData.execution?.error?.message || 'No error message',\n  errorStack: errorData.execution?.error?.stack?.substring(0, 500) || '',\n  timestamp: new Date().toISOString(),\n  executionId: errorData.execution?.id || 'Unknown'\n};\n\nreturn [{ json: errorContext }];"
+			},
+			"id": "extract-error",
+			"name": "Extract Error Context",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [250, 300]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o-mini",
+				"messages": {
+					"values": [
+						{
+							"role": "system",
+							"content": "You are an expert n8n workflow debugger. Analyze errors and provide actionable solutions. Respond in JSON format with: { \"analysis\": \"root cause\", \"severity\": \"low|medium|high|critical\", \"canAutoFix\": true/false, \"suggestedFix\": \"description\", \"humanActionRequired\": true/false, \"notifyTeam\": true/false }"
+						},
+						{
+							"role": "user",
+							"content": "Analyze this workflow error:\n\nWorkflow: {{ $json.workflowName }}\nNode: {{ $json.nodeName }} ({{ $json.nodeType }})\nError: {{ $json.errorMessage }}\n\nStack trace:\n{{ $json.errorStack }}"
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.3
+				}
+			},
+			"id": "analyze-error",
+			"name": "AI Error Analysis",
+			"type": "@n8n/n8n-nodes-langchain.openAi",
+			"typeVersion": 1.8,
+			"position": [500, 300],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse AI analysis response\nconst input = $input.first().json;\nlet analysis;\n\ntry {\n  // Try to parse JSON from response\n  const content = input.message?.content || input.choices?.[0]?.message?.content || '{}';\n  analysis = JSON.parse(content);\n} catch (e) {\n  analysis = {\n    analysis: 'Failed to parse AI response',\n    severity: 'medium',\n    canAutoFix: false,\n    humanActionRequired: true,\n    notifyTeam: true\n  };\n}\n\nreturn [{ json: { ...analysis, originalError: $('Extract Error Context').first().json } }];"
+			},
+			"id": "parse-analysis",
+			"name": "Parse Analysis",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [750, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "notify-check",
+							"leftValue": "={{ $json.notifyTeam }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "should-notify",
+			"name": "Should Notify Team?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1000, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Prepare Slack notification\nconst data = $input.first().json;\nconst severity = data.severity || 'medium';\nconst severityEmoji = {\n  low: 'large_yellow_circle',\n  medium: 'large_orange_circle', \n  high: 'red_circle',\n  critical: 'rotating_light'\n};\n\nreturn [{\n  json: {\n    channel: '#alerts',\n    blocks: [\n      {\n        type: 'header',\n        text: {\n          type: 'plain_text',\n          text: `Workflow Error: ${data.originalError?.workflowName || 'Unknown'}`\n        }\n      },\n      {\n        type: 'section',\n        fields: [\n          { type: 'mrkdwn', text: `*Severity:* :${severityEmoji[severity]}: ${severity.toUpperCase()}` },\n          { type: 'mrkdwn', text: `*Node:* ${data.originalError?.nodeName || 'Unknown'}` }\n        ]\n      },\n      {\n        type: 'section',\n        text: { type: 'mrkdwn', text: `*Analysis:*\\n${data.analysis || 'No analysis available'}` }\n      },\n      {\n        type: 'section',\n        text: { type: 'mrkdwn', text: `*Suggested Fix:*\\n${data.suggestedFix || 'Manual investigation required'}` }\n      }\n    ]\n  }\n}];"
+			},
+			"id": "prepare-notification",
+			"name": "Prepare Notification",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1250, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Log error for monitoring\nconst data = $input.first().json;\n\nconsole.log('Error handled without notification:', JSON.stringify(data, null, 2));\n\nreturn [{\n  json: {\n    status: 'logged',\n    severity: data.severity,\n    autoFixed: data.canAutoFix,\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "log-only",
+			"name": "Log Only",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1250, 400]
+		}
+	],
+	"connections": {
+		"On Workflow Error": {
+			"main": [
+				[
+					{
+						"node": "Extract Error Context",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Extract Error Context": {
+			"main": [
+				[
+					{
+						"node": "AI Error Analysis",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"AI Error Analysis": {
+			"main": [
+				[
+					{
+						"node": "Parse Analysis",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Analysis": {
+			"main": [
+				[
+					{
+						"node": "Should Notify Team?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Should Notify Team?": {
+			"main": [
+				[
+					{
+						"node": "Prepare Notification",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Log Only",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

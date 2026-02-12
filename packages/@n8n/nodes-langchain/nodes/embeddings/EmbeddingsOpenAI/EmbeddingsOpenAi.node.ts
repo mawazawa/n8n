@@ -38,7 +38,12 @@ const modelParameter: INodeProperties = {
 						{
 							type: 'filter',
 							properties: {
-								pass: "={{ $responseItem.id.includes('embed') }}",
+								// If the baseURL is not set or is set to api.openai.com, include only embedding models
+								pass: `={{
+									($parameter.options?.baseURL && !$parameter.options?.baseURL?.startsWith('https://api.openai.com/')) ||
+									($credentials?.url && !$credentials.url.startsWith('https://api.openai.com/')) ||
+									$responseItem.id.includes('embed')
+								}}`,
 							},
 						},
 						{
@@ -201,6 +206,23 @@ export class EmbeddingsOpenAi implements INodeType {
 							'Maximum amount of time a request is allowed to take in seconds. Set to -1 for no timeout.',
 						type: 'number',
 					},
+					{
+						displayName: 'Encoding Format',
+						name: 'encodingFormat',
+						type: 'options',
+						description: 'The format to return the embeddings in',
+						default: undefined,
+						options: [
+							{
+								name: 'Float',
+								value: 'float',
+							},
+							{
+								name: 'Base64',
+								value: 'base64',
+							},
+						],
+					},
 				],
 			},
 		],
@@ -216,6 +238,7 @@ export class EmbeddingsOpenAi implements INodeType {
 			stripNewLines?: boolean;
 			timeout?: number;
 			dimensions?: number | undefined;
+			encodingFormat?: 'float' | 'base64' | undefined;
 		};
 
 		if (options.timeout === -1) {
@@ -236,8 +259,8 @@ export class EmbeddingsOpenAi implements INodeType {
 		}
 
 		const embeddings = new OpenAIEmbeddings({
-			modelName: this.getNodeParameter('model', itemIndex, 'text-embedding-3-small') as string,
-			openAIApiKey: credentials.apiKey as string,
+			model: this.getNodeParameter('model', itemIndex, 'text-embedding-3-small') as string,
+			apiKey: credentials.apiKey as string,
 			...options,
 			configuration,
 		});

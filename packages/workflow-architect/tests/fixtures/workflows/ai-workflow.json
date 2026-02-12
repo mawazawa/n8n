@@ -1,0 +1,262 @@
+{
+  "name": "AI-Powered Document RAG Pipeline",
+  "active": true,
+  "nodes": [
+    {
+      "id": "webhook_1",
+      "name": "Document Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 400],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload-document",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "id": "embeddings_1",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "parameters": {
+        "model": "text-embedding-3-small"
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "id": "vectorstore_1",
+      "name": "Pinecone Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "parameters": {
+        "pineconeIndex": "documents",
+        "mode": "insert"
+      },
+      "credentials": {
+        "pineconeApi": {
+          "id": "2",
+          "name": "Pinecone API"
+        }
+      }
+    },
+    {
+      "id": "retriever_1",
+      "name": "Vector Store Retriever",
+      "type": "@n8n/n8n-nodes-langchain.retrieverVectorStore",
+      "typeVersion": 1,
+      "position": [450, 500],
+      "parameters": {
+        "topK": 5
+      }
+    },
+    {
+      "id": "chatmodel_1",
+      "name": "Claude Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [650, 500],
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 2048
+        }
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "3",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "id": "memory_1",
+      "name": "Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1,
+      "position": [850, 400],
+      "parameters": {
+        "contextWindowLength": 10
+      }
+    },
+    {
+      "id": "agent_1",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1,
+      "position": [850, 500],
+      "parameters": {
+        "promptType": "define",
+        "text": "You are a helpful AI assistant that answers questions based on the provided context. Use the retrieved documents to provide accurate and detailed answers.",
+        "hasOutputParser": true
+      }
+    },
+    {
+      "id": "tool_calculator_1",
+      "name": "Calculator Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolCalculator",
+      "typeVersion": 1,
+      "position": [1050, 400],
+      "parameters": {}
+    },
+    {
+      "id": "tool_http_1",
+      "name": "HTTP Request Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1,
+      "position": [1050, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "none"
+      }
+    },
+    {
+      "id": "slack_1",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1050, 600],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "#ai-responses",
+        "text": "Question: {{ $json.query }}\\n\\nAnswer: {{ $json.response }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "4",
+          "name": "Slack API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Document Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Pinecone Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Pinecone Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          },
+          {
+            "node": "Vector Store Retriever",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pinecone Vector Store": {
+      "ai_vectorStore": [
+        [
+          {
+            "node": "Vector Store Retriever",
+            "type": "ai_vectorStore",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Retriever": {
+      "ai_retriever": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_retriever",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculator Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "id": "ai",
+      "name": "AI"
+    },
+    {
+      "id": "rag",
+      "name": "RAG"
+    }
+  ]
+}

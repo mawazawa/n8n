@@ -1,0 +1,304 @@
+{
+	"name": "Mother of All Flows - AI Classification Engine",
+	"meta": {
+		"description": "Intelligent auto-categorization with confidence thresholds and human review queue"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "classify",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-classify",
+			"name": "Classification Request",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "ai-classification"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse and validate classification request\nconst input = $input.first().json;\nconst body = input.body || input;\n\nif (!body.content && !body.text) {\n  throw new Error('Missing required field: content or text');\n}\n\nconst request = {\n  id: `cls_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n  content: body.content || body.text,\n  metadata: body.metadata || {},\n  categories: body.categories || null, // Custom categories if provided\n  confidenceThreshold: body.confidenceThreshold || 0.85,\n  createdAt: new Date().toISOString()\n};\n\nreturn [{ json: request }];"
+			},
+			"id": "parse-request",
+			"name": "Parse Request",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o-mini",
+				"messages": {
+					"values": [
+						{
+							"role": "system",
+							"content": "You are a precise classification assistant. Analyze the given content and classify it into the most appropriate category. For each classification, provide a confidence score between 0 and 1.\n\nDefault categories (use these unless custom categories are specified):\n- support: Customer support inquiries\n- sales: Sales-related communications\n- billing: Billing and payment issues\n- feedback: Product feedback or suggestions\n- bug_report: Bug reports or technical issues\n- feature_request: Feature requests\n- spam: Spam or irrelevant content\n- other: Content that doesn't fit other categories\n\nRespond in JSON format:\n{\n  \"primary_category\": \"category_name\",\n  \"confidence\": 0.95,\n  \"secondary_category\": \"category_name\",\n  \"secondary_confidence\": 0.75,\n  \"sentiment\": \"positive|negative|neutral\",\n  \"urgency\": \"high|medium|low\",\n  \"keywords\": [\"key\", \"words\"],\n  \"summary\": \"Brief summary of the content\"\n}"
+						},
+						{
+							"role": "user",
+							"content": "Classify the following content:\n\n{{ $json.content }}\n\n{{ $json.categories ? 'Use these custom categories: ' + JSON.stringify($json.categories) : '' }}"
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.1,
+					"responseFormat": "json_object"
+				}
+			},
+			"id": "ai-classify",
+			"name": "AI Classification",
+			"type": "@n8n/n8n-nodes-langchain.openAi",
+			"typeVersion": 1.8,
+			"position": [440, 300],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"jsCode": "// Parse AI response and evaluate confidence\nconst request = $('Parse Request').first().json;\nconst aiResponse = $input.first().json;\n\nlet classification;\ntry {\n  const content = aiResponse.message?.content || aiResponse.choices?.[0]?.message?.content || '{}';\n  classification = JSON.parse(content);\n} catch (e) {\n  classification = {\n    primary_category: 'other',\n    confidence: 0,\n    error: 'Failed to parse AI response'\n  };\n}\n\nconst result = {\n  ...request,\n  classification,\n  meetsThreshold: classification.confidence >= request.confidenceThreshold,\n  requiresReview: classification.confidence < request.confidenceThreshold,\n  processedAt: new Date().toISOString()\n};\n\nreturn [{ json: result }];"
+			},
+			"id": "evaluate-confidence",
+			"name": "Evaluate Confidence",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [660, 300]
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "strict"
+					},
+					"conditions": [
+						{
+							"id": "confidence-check",
+							"leftValue": "={{ $json.meetsThreshold }}",
+							"rightValue": true,
+							"operator": {
+								"type": "boolean",
+								"operation": "equals"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-confidence",
+			"name": "High Confidence?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [880, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Auto-route based on category\nconst result = $input.first().json;\nconst category = result.classification.primary_category;\n\n// Routing rules (in production, load from database)\nconst routingRules = {\n  support: { queue: 'support-team', priority: result.classification.urgency === 'high' ? 1 : 3 },\n  sales: { queue: 'sales-team', priority: 2 },\n  billing: { queue: 'billing-team', priority: result.classification.urgency === 'high' ? 1 : 2 },\n  feedback: { queue: 'product-team', priority: 4 },\n  bug_report: { queue: 'engineering-team', priority: result.classification.urgency === 'high' ? 1 : 2 },\n  feature_request: { queue: 'product-team', priority: 5 },\n  spam: { queue: 'spam-filter', priority: 10, autoArchive: true },\n  other: { queue: 'general-inbox', priority: 5 }\n};\n\nconst routing = routingRules[category] || routingRules['other'];\n\nreturn [{\n  json: {\n    ...result,\n    routing,\n    autoRouted: true,\n    routedAt: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "auto-route",
+			"name": "Auto-Route",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 200]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Add to human review queue\nconst result = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize review queue\nif (!staticData.reviewQueue) {\n  staticData.reviewQueue = [];\n}\n\nconst reviewItem = {\n  id: result.id,\n  content: result.content.substring(0, 200) + (result.content.length > 200 ? '...' : ''),\n  suggestedCategory: result.classification.primary_category,\n  confidence: result.classification.confidence,\n  secondaryCategory: result.classification.secondary_category,\n  sentiment: result.classification.sentiment,\n  urgency: result.classification.urgency,\n  addedAt: new Date().toISOString(),\n  status: 'pending_review'\n};\n\nstaticData.reviewQueue.push(reviewItem);\n\n// Keep queue manageable\nif (staticData.reviewQueue.length > 100) {\n  staticData.reviewQueue = staticData.reviewQueue.slice(-100);\n}\n\nreturn [{\n  json: {\n    ...result,\n    inReviewQueue: true,\n    queuePosition: staticData.reviewQueue.length,\n    reviewUrl: `http://localhost:5678/webhook/classify/review?id=${result.id}`\n  }\n}];"
+			},
+			"id": "add-to-review",
+			"name": "Add to Review Queue",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1100, 400]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Collect training data for model improvement\nconst result = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize training data collection\nif (!staticData.trainingData) {\n  staticData.trainingData = [];\n}\n\nconst trainingExample = {\n  id: result.id,\n  content: result.content,\n  aiPrediction: result.classification.primary_category,\n  aiConfidence: result.classification.confidence,\n  humanLabel: null, // To be filled after review\n  feedback: null,\n  collectedAt: new Date().toISOString()\n};\n\nstaticData.trainingData.push(trainingExample);\n\n// Keep last 1000 examples\nif (staticData.trainingData.length > 1000) {\n  staticData.trainingData = staticData.trainingData.slice(-1000);\n}\n\nreturn [{ json: { ...result, trainingDataCollected: true } }];"
+			},
+			"id": "collect-training",
+			"name": "Collect Training Data",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1320, 400]
+		},
+		{
+			"parameters": {},
+			"id": "merge-paths",
+			"name": "Merge Paths",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [1540, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Calculate and log accuracy metrics\nconst result = $input.first().json;\nconst staticData = $workflow.staticData;\n\n// Initialize metrics\nif (!staticData.metrics) {\n  staticData.metrics = {\n    total: 0,\n    autoRouted: 0,\n    manualReview: 0,\n    categoryBreakdown: {},\n    avgConfidence: 0,\n    confidenceSum: 0\n  };\n}\n\nconst m = staticData.metrics;\nm.total++;\nif (result.autoRouted) m.autoRouted++;\nif (result.inReviewQueue) m.manualReview++;\n\nconst category = result.classification.primary_category;\nm.categoryBreakdown[category] = (m.categoryBreakdown[category] || 0) + 1;\n\nm.confidenceSum += result.classification.confidence;\nm.avgConfidence = m.confidenceSum / m.total;\n\nconst metrics = {\n  total: m.total,\n  autoRoutedRate: ((m.autoRouted / m.total) * 100).toFixed(2) + '%',\n  manualReviewRate: ((m.manualReview / m.total) * 100).toFixed(2) + '%',\n  avgConfidence: (m.avgConfidence * 100).toFixed(2) + '%',\n  topCategories: Object.entries(m.categoryBreakdown)\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, 5)\n    .map(([cat, count]) => ({ category: cat, count }))\n};\n\nreturn [{\n  json: {\n    ...result,\n    metrics\n  }\n}];"
+			},
+			"id": "log-metrics",
+			"name": "Log Metrics",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1760, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format final response\nconst result = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    classificationId: result.id,\n    classification: {\n      category: result.classification.primary_category,\n      confidence: result.classification.confidence,\n      secondaryCategory: result.classification.secondary_category,\n      sentiment: result.classification.sentiment,\n      urgency: result.classification.urgency,\n      keywords: result.classification.keywords,\n      summary: result.classification.summary\n    },\n    routing: result.autoRouted ? result.routing : null,\n    requiresReview: result.requiresReview,\n    reviewQueue: result.inReviewQueue ? {\n      position: result.queuePosition,\n      reviewUrl: result.reviewUrl\n    } : null,\n    processedAt: result.processedAt\n  }\n}];"
+			},
+			"id": "format-response",
+			"name": "Format Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1980, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Return Result",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [2200, 300]
+		}
+	],
+	"connections": {
+		"Classification Request": {
+			"main": [
+				[
+					{
+						"node": "Parse Request",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Request": {
+			"main": [
+				[
+					{
+						"node": "AI Classification",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"AI Classification": {
+			"main": [
+				[
+					{
+						"node": "Evaluate Confidence",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Evaluate Confidence": {
+			"main": [
+				[
+					{
+						"node": "High Confidence?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"High Confidence?": {
+			"main": [
+				[
+					{
+						"node": "Auto-Route",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Add to Review Queue",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Auto-Route": {
+			"main": [
+				[
+					{
+						"node": "Merge Paths",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Add to Review Queue": {
+			"main": [
+				[
+					{
+						"node": "Collect Training Data",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Collect Training Data": {
+			"main": [
+				[
+					{
+						"node": "Merge Paths",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Paths": {
+			"main": [
+				[
+					{
+						"node": "Log Metrics",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Log Metrics": {
+			"main": [
+				[
+					{
+						"node": "Format Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format Response": {
+			"main": [
+				[
+					{
+						"node": "Return Result",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

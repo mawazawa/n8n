@@ -1,0 +1,379 @@
+{
+	"name": "Mother of All Flows - Multi-Model Fallback Chain",
+	"meta": {
+		"description": "Reliable AI with automatic fallback between GPT-4o, Claude, and Gemini"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"httpMethod": "POST",
+				"path": "ai-query",
+				"responseMode": "responseNode",
+				"options": {}
+			},
+			"id": "webhook-query",
+			"name": "API Endpoint",
+			"type": "n8n-nodes-base.webhook",
+			"typeVersion": 2,
+			"position": [0, 300],
+			"webhookId": "multi-model-query"
+		},
+		{
+			"parameters": {
+				"assignments": {
+					"assignments": [
+						{
+							"id": "prompt-extract",
+							"name": "prompt",
+							"value": "={{ $json.body.prompt || $json.prompt || 'Hello' }}",
+							"type": "string"
+						},
+						{
+							"id": "model-track",
+							"name": "attemptedModels",
+							"value": "=[]",
+							"type": "array"
+						}
+					]
+				}
+			},
+			"id": "set-context",
+			"name": "Extract Prompt",
+			"type": "n8n-nodes-base.set",
+			"typeVersion": 3.4,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o",
+				"messages": {
+					"values": [
+						{
+							"role": "user",
+							"content": "={{ $json.prompt }}"
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.7,
+					"timeout": 30000
+				}
+			},
+			"id": "openai-primary",
+			"name": "GPT-4o (Primary)",
+			"type": "@n8n/n8n-nodes-langchain.openAi",
+			"typeVersion": 1.8,
+			"position": [440, 200],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "loose"
+					},
+					"conditions": [
+						{
+							"id": "check-success",
+							"leftValue": "={{ $json.message?.content || $json.choices?.[0]?.message?.content }}",
+							"rightValue": "",
+							"operator": {
+								"type": "string",
+								"operation": "notEmpty"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-openai",
+			"name": "GPT-4o Success?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [660, 200]
+		},
+		{
+			"parameters": {
+				"model": "claude-3-5-sonnet-20241022",
+				"messages": {
+					"values": [
+						{
+							"role": "user",
+							"content": "={{ $('Extract Prompt').item.json.prompt }}"
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.7,
+					"timeout": 30000
+				}
+			},
+			"id": "anthropic-fallback",
+			"name": "Claude 3.5 (Fallback 1)",
+			"type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+			"typeVersion": 1.3,
+			"position": [880, 350],
+			"credentials": {
+				"anthropicApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "Anthropic API"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"conditions": {
+					"options": {
+						"caseSensitive": true,
+						"leftValue": "",
+						"typeValidation": "loose"
+					},
+					"conditions": [
+						{
+							"id": "check-claude",
+							"leftValue": "={{ $json.message?.content || $json.content?.[0]?.text }}",
+							"rightValue": "",
+							"operator": {
+								"type": "string",
+								"operation": "notEmpty"
+							}
+						}
+					],
+					"combinator": "and"
+				}
+			},
+			"id": "check-claude",
+			"name": "Claude Success?",
+			"type": "n8n-nodes-base.if",
+			"typeVersion": 2.2,
+			"position": [1100, 350]
+		},
+		{
+			"parameters": {
+				"modelName": "models/gemini-2.0-flash",
+				"messages": {
+					"values": [
+						{
+							"role": "user",
+							"content": "={{ $('Extract Prompt').item.json.prompt }}"
+						}
+					]
+				},
+				"options": {
+					"temperature": 0.7,
+					"timeout": 30000
+				}
+			},
+			"id": "gemini-fallback",
+			"name": "Gemini 2.0 (Fallback 2)",
+			"type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+			"typeVersion": 1,
+			"position": [1320, 500],
+			"credentials": {
+				"googlePalmApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "Google Gemini API"
+				}
+			},
+			"onError": "continueRegularOutput"
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format successful OpenAI response\nconst response = $input.first().json;\nconst content = response.message?.content || response.choices?.[0]?.message?.content || '';\n\nreturn [{\n  json: {\n    success: true,\n    model: 'gpt-4o',\n    content,\n    fallbackUsed: false,\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "format-openai",
+			"name": "Format OpenAI Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [880, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format successful Claude response\nconst response = $input.first().json;\nconst content = response.message?.content || response.content?.[0]?.text || '';\n\nreturn [{\n  json: {\n    success: true,\n    model: 'claude-3.5-sonnet',\n    content,\n    fallbackUsed: true,\n    fallbackLevel: 1,\n    timestamp: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "format-claude",
+			"name": "Format Claude Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1320, 250]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Format Gemini response (last resort)\nconst response = $input.first().json;\nconst content = response.message?.content || response.text || '';\n\nif (content) {\n  return [{\n    json: {\n      success: true,\n      model: 'gemini-2.0-flash',\n      content,\n      fallbackUsed: true,\n      fallbackLevel: 2,\n      timestamp: new Date().toISOString()\n    }\n  }];\n} else {\n  return [{\n    json: {\n      success: false,\n      error: 'All models failed',\n      modelsAttempted: ['gpt-4o', 'claude-3.5-sonnet', 'gemini-2.0-flash'],\n      timestamp: new Date().toISOString()\n    }\n  }];\n}"
+			},
+			"id": "format-gemini",
+			"name": "Format Gemini Response",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [1540, 500]
+		},
+		{
+			"parameters": {},
+			"id": "merge-responses",
+			"name": "Merge Responses",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [1760, 300]
+		},
+		{
+			"parameters": {
+				"respondWith": "json",
+				"responseBody": "={{ $json }}"
+			},
+			"id": "respond",
+			"name": "Send Response",
+			"type": "n8n-nodes-base.respondToWebhook",
+			"typeVersion": 1,
+			"position": [1980, 300]
+		}
+	],
+	"connections": {
+		"API Endpoint": {
+			"main": [
+				[
+					{
+						"node": "Extract Prompt",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Extract Prompt": {
+			"main": [
+				[
+					{
+						"node": "GPT-4o (Primary)",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"GPT-4o (Primary)": {
+			"main": [
+				[
+					{
+						"node": "GPT-4o Success?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"GPT-4o Success?": {
+			"main": [
+				[
+					{
+						"node": "Format OpenAI Response",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Claude 3.5 (Fallback 1)",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Claude 3.5 (Fallback 1)": {
+			"main": [
+				[
+					{
+						"node": "Claude Success?",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Claude Success?": {
+			"main": [
+				[
+					{
+						"node": "Format Claude Response",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Gemini 2.0 (Fallback 2)",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Gemini 2.0 (Fallback 2)": {
+			"main": [
+				[
+					{
+						"node": "Format Gemini Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format OpenAI Response": {
+			"main": [
+				[
+					{
+						"node": "Merge Responses",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format Claude Response": {
+			"main": [
+				[
+					{
+						"node": "Merge Responses",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Format Gemini Response": {
+			"main": [
+				[
+					{
+						"node": "Merge Responses",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Merge Responses": {
+			"main": [
+				[
+					{
+						"node": "Send Response",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

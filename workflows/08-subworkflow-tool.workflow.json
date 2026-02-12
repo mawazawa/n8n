@@ -1,0 +1,261 @@
+{
+	"name": "Mother of All Flows - Sub-Workflow Tool Template",
+	"meta": {
+		"description": "Template for creating reusable sub-workflows as AI agent tools"
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"inputSource": "passthrough"
+			},
+			"id": "subworkflow-trigger",
+			"name": "Execute Workflow Trigger",
+			"type": "n8n-nodes-base.executeWorkflowTrigger",
+			"typeVersion": 1.1,
+			"position": [0, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Extract input from parent workflow/AI agent\nconst input = $input.first().json;\n\n// Log for debugging\nconsole.log('Sub-workflow received:', JSON.stringify(input, null, 2));\n\n// Validate required fields\nconst action = input.action || 'default';\nconst data = input.data || {};\n\nreturn [{\n  json: {\n    action,\n    data,\n    receivedAt: new Date().toISOString()\n  }\n}];"
+			},
+			"id": "parse-input",
+			"name": "Parse Input",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [220, 300]
+		},
+		{
+			"parameters": {
+				"rules": {
+					"values": [
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.action }}",
+										"rightValue": "search",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "search"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.action }}",
+										"rightValue": "create",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "create"
+						},
+						{
+							"conditions": {
+								"options": {
+									"caseSensitive": true,
+									"leftValue": "",
+									"typeValidation": "strict"
+								},
+								"conditions": [
+									{
+										"leftValue": "={{ $json.action }}",
+										"rightValue": "update",
+										"operator": {
+											"type": "string",
+											"operation": "equals"
+										}
+									}
+								],
+								"combinator": "and"
+							},
+							"renameOutput": true,
+							"outputKey": "update"
+						}
+					]
+				},
+				"options": {
+					"fallbackOutput": "extra"
+				}
+			},
+			"id": "route-action",
+			"name": "Route by Action",
+			"type": "n8n-nodes-base.switch",
+			"typeVersion": 3.2,
+			"position": [440, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// SEARCH action handler\n// Replace with your actual search logic (database, API, etc.)\nconst data = $input.first().json.data;\nconst query = data.query || '';\n\n// Simulated search results\nconst results = [\n  { id: 1, title: 'Result 1', relevance: 0.95 },\n  { id: 2, title: 'Result 2', relevance: 0.87 },\n  { id: 3, title: 'Result 3', relevance: 0.72 }\n].filter(r => r.title.toLowerCase().includes(query.toLowerCase()) || !query);\n\nreturn [{\n  json: {\n    action: 'search',\n    success: true,\n    results,\n    count: results.length,\n    query\n  }\n}];"
+			},
+			"id": "handle-search",
+			"name": "Handle Search",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 100]
+		},
+		{
+			"parameters": {
+				"jsCode": "// CREATE action handler\n// Replace with your actual create logic\nconst data = $input.first().json.data;\n\n// Simulated create operation\nconst newRecord = {\n  id: Date.now(),\n  ...data,\n  createdAt: new Date().toISOString()\n};\n\nreturn [{\n  json: {\n    action: 'create',\n    success: true,\n    record: newRecord\n  }\n}];"
+			},
+			"id": "handle-create",
+			"name": "Handle Create",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 300]
+		},
+		{
+			"parameters": {
+				"jsCode": "// UPDATE action handler\n// Replace with your actual update logic\nconst data = $input.first().json.data;\nconst id = data.id;\n\nif (!id) {\n  return [{\n    json: {\n      action: 'update',\n      success: false,\n      error: 'No ID provided for update'\n    }\n  }];\n}\n\n// Simulated update operation\nconst updatedRecord = {\n  id,\n  ...data,\n  updatedAt: new Date().toISOString()\n};\n\nreturn [{\n  json: {\n    action: 'update',\n    success: true,\n    record: updatedRecord\n  }\n}];"
+			},
+			"id": "handle-update",
+			"name": "Handle Update",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 500]
+		},
+		{
+			"parameters": {
+				"jsCode": "// Default/fallback handler\nconst input = $input.first().json;\n\nreturn [{\n  json: {\n    action: input.action || 'unknown',\n    success: false,\n    error: `Unknown action: ${input.action}`,\n    supportedActions: ['search', 'create', 'update']\n  }\n}];"
+			},
+			"id": "handle-default",
+			"name": "Handle Default",
+			"type": "n8n-nodes-base.code",
+			"typeVersion": 2,
+			"position": [700, 700]
+		},
+		{
+			"parameters": {},
+			"id": "merge-output",
+			"name": "Merge Output",
+			"type": "n8n-nodes-base.merge",
+			"typeVersion": 3,
+			"position": [920, 300]
+		}
+	],
+	"connections": {
+		"Execute Workflow Trigger": {
+			"main": [
+				[
+					{
+						"node": "Parse Input",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Parse Input": {
+			"main": [
+				[
+					{
+						"node": "Route by Action",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Route by Action": {
+			"main": [
+				[
+					{
+						"node": "Handle Search",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Create",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Update",
+						"type": "main",
+						"index": 0
+					}
+				],
+				[
+					{
+						"node": "Handle Default",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Search": {
+			"main": [
+				[
+					{
+						"node": "Merge Output",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Create": {
+			"main": [
+				[
+					{
+						"node": "Merge Output",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Update": {
+			"main": [
+				[
+					{
+						"node": "Merge Output",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Handle Default": {
+			"main": [
+				[
+					{
+						"node": "Merge Output",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

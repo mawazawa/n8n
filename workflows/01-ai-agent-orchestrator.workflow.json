@@ -1,0 +1,187 @@
+{
+	"name": "Mother of All Flows - AI Agent Orchestrator",
+	"meta": {
+		"description": "Autonomous AI agent with tool orchestration for dynamic task execution",
+		"templateCredsSetupCompleted": false
+	},
+	"nodes": [
+		{
+			"parameters": {
+				"options": {
+					"systemMessage": "You are a powerful AI assistant with access to multiple tools. Analyze user requests carefully and use the appropriate tools to complete tasks. Always explain your reasoning before taking action."
+				}
+			},
+			"id": "chat-trigger-001",
+			"name": "Chat Trigger",
+			"type": "@n8n/n8n-nodes-langchain.chatTrigger",
+			"typeVersion": 1.1,
+			"position": [0, 300],
+			"webhookId": "mother-of-all-flows-chat"
+		},
+		{
+			"parameters": {
+				"options": {}
+			},
+			"id": "agent-001",
+			"name": "AI Agent",
+			"type": "@n8n/n8n-nodes-langchain.agent",
+			"typeVersion": 3.1,
+			"position": [400, 300]
+		},
+		{
+			"parameters": {
+				"model": "gpt-4o",
+				"options": {
+					"temperature": 0.7
+				}
+			},
+			"id": "openai-model-001",
+			"name": "OpenAI GPT-4o",
+			"type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+			"typeVersion": 1.2,
+			"position": [200, 500],
+			"credentials": {
+				"openAiApi": {
+					"id": "REPLACE_WITH_CREDENTIAL_ID",
+					"name": "OpenAI API"
+				}
+			}
+		},
+		{
+			"parameters": {
+				"contextWindowLength": 10
+			},
+			"id": "memory-001",
+			"name": "Conversation Memory",
+			"type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+			"typeVersion": 1.3,
+			"position": [400, 500]
+		},
+		{
+			"parameters": {
+				"name": "search_knowledge_base",
+				"description": "Search the knowledge base for relevant information. Use this when the user asks questions that might be answered by stored documents."
+			},
+			"id": "tool-vector-001",
+			"name": "Tool: Knowledge Search",
+			"type": "@n8n/n8n-nodes-langchain.toolVectorStore",
+			"typeVersion": 1,
+			"position": [600, 500]
+		},
+		{
+			"parameters": {
+				"name": "execute_code",
+				"description": "Execute JavaScript code for calculations, data transformations, or custom logic. Returns the result of the code execution."
+			},
+			"id": "tool-code-001",
+			"name": "Tool: Execute Code",
+			"type": "@n8n/n8n-nodes-langchain.toolCode",
+			"typeVersion": 1.1,
+			"position": [200, 700]
+		},
+		{
+			"parameters": {
+				"name": "call_api",
+				"description": "Make HTTP requests to external APIs. Provide the URL, method, headers, and body as needed."
+			},
+			"id": "tool-http-001",
+			"name": "Tool: HTTP Request",
+			"type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+			"typeVersion": 1.1,
+			"position": [400, 700]
+		},
+		{
+			"parameters": {
+				"name": "think",
+				"description": "Use this tool to think through complex problems step by step before taking action."
+			},
+			"id": "tool-think-001",
+			"name": "Tool: Think",
+			"type": "@n8n/n8n-nodes-langchain.toolThink",
+			"typeVersion": 1,
+			"position": [600, 700]
+		}
+	],
+	"connections": {
+		"Chat Trigger": {
+			"main": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"OpenAI GPT-4o": {
+			"ai_languageModel": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "ai_languageModel",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Conversation Memory": {
+			"ai_memory": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "ai_memory",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Tool: Knowledge Search": {
+			"ai_tool": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "ai_tool",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Tool: Execute Code": {
+			"ai_tool": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "ai_tool",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Tool: HTTP Request": {
+			"ai_tool": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "ai_tool",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Tool: Think": {
+			"ai_tool": [
+				[
+					{
+						"node": "AI Agent",
+						"type": "ai_tool",
+						"index": 0
+					}
+				]
+			]
+		}
+	},
+	"settings": {
+		"executionOrder": "v1"
+	}
+}

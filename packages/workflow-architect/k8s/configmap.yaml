@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workflow-architect-config
+  namespace: default
+  labels:
+    app: workflow-architect
+data:
+  # Logging configuration
+  log-level: "info"
+
+  # Rate limiting
+  rate-limit-window-ms: "60000"
+  rate-limit-max-requests: "100"
+
+  # Request timeout
+  request-timeout-ms: "30000"
+
+  # Observability
+  enable-tracing: "false"
+  enable-metrics: "true"
+
+  # n8n configuration
+  n8n-base-url: "http://n8n:5678"
+
+  # Application settings
+  node-env: "production"
+  port: "3080"
+
+---
+# Secret template - Create this manually with actual values
+# kubectl create secret generic workflow-architect-secrets \
+#   --from-literal=n8n-api-key=YOUR_N8N_API_KEY \
+#   --from-literal=anthropic-api-key=YOUR_ANTHROPIC_API_KEY \
+#   --from-literal=openai-api-key=YOUR_OPENAI_API_KEY \
+#   --from-literal=supabase-url=YOUR_SUPABASE_URL \
+#   --from-literal=supabase-anon-key=YOUR_SUPABASE_ANON_KEY \
+#   --from-literal=supabase-service-role-key=YOUR_SUPABASE_SERVICE_ROLE_KEY
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: workflow-architect-secrets
+  namespace: default
+  labels:
+    app: workflow-architect
+type: Opaque
+data:
+  # Base64 encoded secrets - REPLACE WITH ACTUAL VALUES
+  # Use: echo -n 'your-secret' | base64
+  n8n-api-key: ""
+  anthropic-api-key: ""
+  openai-api-key: ""
+  supabase-url: ""
+  supabase-anon-key: ""
+  supabase-service-role-key: ""
