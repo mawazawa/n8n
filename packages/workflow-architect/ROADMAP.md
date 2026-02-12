@@ -1,360 +1,271 @@
-# Workflow Architect - Phase 2 Roadmap
-## 10 Highest Leverage Actions with Atomic Tasks
+# Workflow Architect - Phase 3 Roadmap
+## Top 3 Highest-Leverage Features
 
-**Created:** December 28, 2025
+**Created:** February 2026
 **Status:** 🚀 READY FOR EXECUTION
+**Methodology:** Chain of Verification (4/4 across all research dimensions)
 
 ---
 
-## Overview
+## Completed Phases
 
-| # | Action | Priority | Complexity | Dependencies |
-|---|--------|----------|------------|--------------|
-| 1 | Supabase RAG Integration | P0 | Medium | None |
-| 2 | Automatic Embeddings Pipeline | P0 | Medium | Action 1 |
-| 3 | Configurator Agent | P1 | Low | None |
-| 4 | React Chat UI with useStream | P1 | Medium | None |
-| 5 | Canvas Streaming Integration | P1 | High | Action 4 |
-| 6 | n8n Editor Integration | P2 | High | Actions 4, 5 |
-| 7 | Advanced RAG (Hybrid + Reranking) | P2 | Medium | Action 1 |
-| 8 | Multi-Model Enhancements | P2 | Low | None |
-| 9 | Testing Suite | P1 | Medium | All |
-| 10 | Production Hardening | P3 | Medium | All |
+| Phase | Description | Tasks | Status |
+|-------|-------------|-------|--------|
+| Phase 1 | Core Infrastructure | 748 | ✅ Complete |
+| Phase 2 | Enterprise Features | 115 | ✅ Complete |
+| **Phase 3** | **Highest-Leverage** | **130** | **🚀 Ready** |
 
 ---
 
-## Action 1: Supabase RAG Integration
+## Phase 3 Overview
 
-**Goal:** Replace local vector store with Supabase pgvector for scalable, production-ready RAG.
+| # | Feature | Priority | Impact | Effort | Dependencies |
+|---|---------|----------|--------|--------|--------------|
+| 1 | MCP Native Integration | P0 | 95/100 | 3-4 weeks | None |
+| 2 | Three-Tier Agent Memory | P0 | 92/100 | 4-5 weeks | Action 1 |
+| 3 | Human-in-the-Loop Orchestration | P1 | 88/100 | 3-4 weeks | None |
+
+---
+
+## Action 1: MCP Native Integration
+
+**Goal:** Native Model Context Protocol support for instant access to 10,000+ tools
 
 **References:**
-- [Supabase Vector Docs](https://supabase.com/docs/guides/ai)
-- [pgvector Extension](https://supabase.com/docs/guides/database/extensions/pgvector)
-- [LangChain Supabase Integration](https://js.langchain.com/docs/integrations/vectorstores/supabase/)
+- [MCP Specification](https://spec.modelcontextprotocol.io/specification/)
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [MCP Server Registry](https://github.com/modelcontextprotocol/servers)
 
-### Subtasks
+### Subtasks (40 tasks)
 
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 1.1 | Create Supabase project and enable pgvector | `supabase/config.toml` | pgvector extension enabled in Supabase dashboard |
-| 1.2 | Define workflow_examples table schema with vector column | `supabase/migrations/001_workflow_examples.sql` | Table created with embedding column (vector(1536)) |
-| 1.3 | Create match_workflows RPC function for similarity search | `supabase/migrations/002_match_function.sql` | Function returns top-k similar workflows |
-| 1.4 | Add HNSW index for fast vector search | `supabase/migrations/003_hnsw_index.sql` | Index created, query time <100ms for 10k docs |
-| 1.5 | Install @supabase/supabase-js and configure client | `package.json`, `src/supabase/client.ts` | Client connects and authenticates successfully |
-| 1.6 | Create SupabaseVectorStore class implementing store interface | `src/rag/supabase-store.ts` | Class implements add, search, delete methods |
-| 1.7 | Migrate local store data to Supabase | `src/scripts/migrate-to-supabase.ts` | All 34 workflows migrated with embeddings |
-| 1.8 | Update RAG store factory to use Supabase | `src/rag/store.ts`, `src/rag/index.ts` | Factory returns Supabase store when configured |
-| 1.9 | Add environment variables for Supabase | `.env.schema`, `src/config.ts` | SUPABASE_URL, SUPABASE_ANON_KEY validated |
-| 1.10 | Integration test: full RAG flow with Supabase | `tests/integration/supabase-rag.test.ts` | Search returns relevant results, latency <200ms |
-| 1.11 | Add Row Level Security (RLS) for multi-tenant | `supabase/migrations/004_rls_policies.sql` | Users can only access their own workflows |
-| 1.12 | Document Supabase setup in README | `README.md`, `docs/supabase-setup.md` | Clear instructions for self-hosted setup |
+| # | Task | Files | Success Criteria |
+|---|------|-------|------------------|
+| 1.1 | Install MCP TypeScript SDK | `package.json` | @modelcontextprotocol/sdk installed |
+| 1.2 | Create MCP client base class | `src/mcp/client.ts` | Client implements MCP 2025-03 spec |
+| 1.3 | Implement stdio transport | `src/mcp/transport/stdio.ts` | Local process communication works |
+| 1.4 | Implement SSE transport | `src/mcp/transport/sse.ts` | Server-sent events transport works |
+| 1.5 | Implement WebSocket transport | `src/mcp/transport/websocket.ts` | WebSocket transport works |
+| 1.6 | Create transport factory | `src/mcp/transport/factory.ts` | Auto-select transport based on server |
+| 1.7 | Implement MCP protocol handler | `src/mcp/protocol.ts` | Request/response/notification handling |
+| 1.8 | Create server connection manager | `src/mcp/connection-manager.ts` | Pool and manage server connections |
+| 1.9 | Add connection health checks | `src/mcp/health.ts` | Detect and recover failed connections |
+| 1.10 | Implement capability negotiation | `src/mcp/capabilities.ts` | Negotiate supported features per server |
+| 1.11 | Create server registry schema | `src/mcp/registry/schema.ts` | Define server metadata structure |
+| 1.12 | Build server registry storage | `src/mcp/registry/store.ts` | Persist registered servers in Supabase |
+| 1.13 | Create server discovery service | `src/mcp/registry/discovery.ts` | Scan for available MCP servers |
+| 1.14 | Add popular servers preset | `src/mcp/registry/presets.ts` | Pre-configured top 50 MCP servers |
+| 1.15 | Build registry management API | `src/mcp/registry/api.ts` | CRUD operations for servers |
+| 1.16 | Create tool discovery service | `src/mcp/tools/discovery.ts` | Enumerate tools from connected servers |
+| 1.17 | Implement tool schema parser | `src/mcp/tools/schema.ts` | Parse JSON Schema tool definitions |
+| 1.18 | Create tool adapter interface | `src/mcp/tools/adapter.ts` | Convert MCP tool → LangChain tool |
+| 1.19 | Build dynamic tool generator | `src/mcp/tools/generator.ts` | Generate n8n nodes from MCP tools |
+| 1.20 | Add tool caching layer | `src/mcp/tools/cache.ts` | Cache tool schemas for performance |
+| 1.21 | Implement resource discovery | `src/mcp/resources/discovery.ts` | List resources from servers |
+| 1.22 | Create resource browser API | `src/mcp/resources/browser.ts` | Navigate resource hierarchies |
+| 1.23 | Add resource content fetching | `src/mcp/resources/content.ts` | Retrieve resource content |
+| 1.24 | Implement resource subscriptions | `src/mcp/resources/subscriptions.ts` | Subscribe to resource changes |
+| 1.25 | Create prompt template loader | `src/mcp/prompts/loader.ts` | Load prompts from MCP servers |
+| 1.26 | Build prompt argument resolver | `src/mcp/prompts/arguments.ts` | Resolve prompt arguments |
+| 1.27 | Add prompt caching | `src/mcp/prompts/cache.ts` | Cache frequently used prompts |
+| 1.28 | Create server config UI component | `ui/src/components/mcp/ServerConfig.tsx` | Add/edit MCP servers |
+| 1.29 | Build server list UI | `ui/src/components/mcp/ServerList.tsx` | Display registered servers |
+| 1.30 | Create tool browser UI | `ui/src/components/mcp/ToolBrowser.tsx` | Browse available MCP tools |
+| 1.31 | Add resource explorer UI | `ui/src/components/mcp/ResourceExplorer.tsx` | Visual resource browser |
+| 1.32 | Build prompt gallery UI | `ui/src/components/mcp/PromptGallery.tsx` | Browse and use MCP prompts |
+| 1.33 | Create connection status UI | `ui/src/components/mcp/ConnectionStatus.tsx` | Real-time connection health |
+| 1.34 | Add server install wizard | `ui/src/components/mcp/InstallWizard.tsx` | Guided MCP server setup |
+| 1.35 | Integrate MCP tools with agent graph | `src/graph/mcp-integration.ts` | Agents can use MCP tools |
+| 1.36 | Add MCP tool selection logic | `src/graph/agents/tool-selector.ts` | Smart tool selection from MCP |
+| 1.37 | Create MCP error handling | `src/mcp/errors.ts` | Graceful error handling |
+| 1.38 | Add MCP metrics and logging | `src/mcp/observability.ts` | Track MCP usage and performance |
+| 1.39 | Write unit tests | `tests/unit/mcp/*.test.ts` | 90% coverage on MCP module |
+| 1.40 | Write integration tests | `tests/integration/mcp.test.ts` | E2E MCP flow tested |
 
-**Success Metric:** RAG queries return results in <200ms with 90%+ relevance
+**Success Metric:** Tool discovery <100ms, 80% of top 100 MCP servers supported
 
 ---
 
-## Action 2: Automatic Embeddings Pipeline
+## Action 2: Three-Tier Agent Memory System
 
-**Goal:** Generate embeddings automatically when workflows are indexed, using Supabase Edge Functions.
+**Goal:** Persistent memory system solving the #1 n8n community pain point
 
 **References:**
-- [Supabase Automatic Embeddings](https://supabase.com/docs/guides/ai/automatic-embeddings)
-- [Generate Embeddings](https://supabase.com/docs/guides/ai/quickstarts/generate-text-embeddings)
-- [Running AI Models](https://supabase.com/docs/guides/functions/ai-models)
+- [LangChain Memory](https://js.langchain.com/docs/modules/memory/)
+- [MemGPT Architecture](https://memgpt.ai/)
+- [Supabase pgvector](https://supabase.com/docs/guides/ai/vector-columns)
 
-### Subtasks
+### Subtasks (50 tasks)
 
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 2.1 | Create Edge Function for embedding generation | `supabase/functions/generate-embedding/index.ts` | Function accepts text, returns 1536-dim vector |
-| 2.2 | Configure embedding model (text-embedding-3-small) | `supabase/functions/generate-embedding/config.ts` | Model selected and API key configured |
-| 2.3 | Create database trigger for auto-embedding on insert | `supabase/migrations/005_auto_embed_trigger.sql` | New rows automatically get embeddings |
-| 2.4 | Create pg_net webhook to call Edge Function | `supabase/migrations/006_pg_net_webhook.sql` | Trigger calls Edge Function via pg_net |
-| 2.5 | Add retry logic for failed embeddings | `supabase/functions/generate-embedding/retry.ts` | Failed embeddings retry 3x with backoff |
-| 2.6 | Create embedding status column and tracking | `supabase/migrations/007_embedding_status.sql` | Status: pending, processing, completed, failed |
-| 2.7 | Build admin UI for monitoring embedding queue | `src/ui/admin/EmbeddingStatus.tsx` | Dashboard shows pending/completed/failed counts |
-| 2.8 | Add batch embedding for initial import | `supabase/functions/batch-embed/index.ts` | Process 100 workflows in parallel |
-| 2.9 | Implement embedding versioning for model updates | `supabase/migrations/008_embedding_version.sql` | Track which model version generated each embedding |
-| 2.10 | Test: embedding accuracy and latency | `tests/integration/auto-embed.test.ts` | Embeddings generated <2s per workflow |
+| # | Task | Files | Success Criteria |
+|---|------|-------|------------------|
+| 2.1 | Define memory type interfaces | `src/memory/types.ts` | Episodic, Semantic, Procedural types |
+| 2.2 | Create unified memory interface | `src/memory/interface.ts` | remember(), recall(), forget() API |
+| 2.3 | Build memory factory | `src/memory/factory.ts` | Create memory instances per type |
+| 2.4 | Implement episodic memory store | `src/memory/episodic/store.ts` | Recent events storage |
+| 2.5 | Create conversation history tracker | `src/memory/episodic/conversation.ts` | Track conversation turns |
+| 2.6 | Add sliding window for episodic | `src/memory/episodic/window.ts` | Configurable context window |
+| 2.7 | Implement Redis caching layer | `src/memory/episodic/redis.ts` | Fast episodic memory access |
+| 2.8 | Create episodic persistence | `src/memory/episodic/persist.ts` | Persist to PostgreSQL |
+| 2.9 | Build episodic retrieval | `src/memory/episodic/retrieval.ts` | Time-based retrieval |
+| 2.10 | Add episodic importance scoring | `src/memory/episodic/importance.ts` | Score event importance |
+| 2.11 | Create semantic memory schema | `supabase/migrations/012_semantic_memory.sql` | Vector table for knowledge |
+| 2.12 | Implement semantic embedding pipeline | `src/memory/semantic/embeddings.ts` | Generate embeddings for facts |
+| 2.13 | Build semantic vector store | `src/memory/semantic/store.ts` | pgvector-based storage |
+| 2.14 | Create entity extractor | `src/memory/semantic/entities.ts` | Extract entities from text |
+| 2.15 | Implement relation extraction | `src/memory/semantic/relations.ts` | Extract entity relationships |
+| 2.16 | Build knowledge graph | `src/memory/semantic/graph.ts` | Graph-based knowledge storage |
+| 2.17 | Create semantic search | `src/memory/semantic/search.ts` | Vector + keyword hybrid search |
+| 2.18 | Add fact deduplication | `src/memory/semantic/dedup.ts` | Prevent duplicate facts |
+| 2.19 | Implement fact contradiction detection | `src/memory/semantic/contradictions.ts` | Detect conflicting facts |
+| 2.20 | Create semantic query interface | `src/memory/semantic/query.ts` | Natural language queries |
+| 2.21 | Define procedural memory schema | `src/memory/procedural/schema.ts` | Skill/workflow storage |
+| 2.22 | Implement skill storage | `src/memory/procedural/skills.ts` | Store learned skills |
+| 2.23 | Create workflow pattern storage | `src/memory/procedural/patterns.ts` | Store workflow patterns |
+| 2.24 | Build skill retrieval | `src/memory/procedural/retrieval.ts` | Retrieve relevant skills |
+| 2.25 | Add skill versioning | `src/memory/procedural/versions.ts` | Version control for skills |
+| 2.26 | Implement skill refinement | `src/memory/procedural/refine.ts` | Improve skills over time |
+| 2.27 | Create consolidation service | `src/memory/consolidation/service.ts` | Move memories between tiers |
+| 2.28 | Build importance scoring | `src/memory/consolidation/scoring.ts` | Score memory importance |
+| 2.29 | Implement sleep-like consolidation | `src/memory/consolidation/sleep.ts` | Background consolidation |
+| 2.30 | Add decay and forgetting | `src/memory/consolidation/decay.ts` | Graceful forgetting |
+| 2.31 | Create retention policies | `src/memory/policies/retention.ts` | TTL and quota policies |
+| 2.32 | Build compliance controls | `src/memory/policies/compliance.ts` | GDPR right-to-forget |
+| 2.33 | Add tenant isolation | `src/memory/policies/isolation.ts` | Multi-tenant memory |
+| 2.34 | Create memory migrations | `supabase/migrations/013_memory_tables.sql` | Database schema |
+| 2.35 | Build memory cleanup job | `src/memory/jobs/cleanup.ts` | Scheduled cleanup |
+| 2.36 | Integrate with agent graph | `src/graph/memory-integration.ts` | Agents use memory |
+| 2.37 | Create memory context builder | `src/memory/context.ts` | Build memory context |
+| 2.38 | Add memory to prompts | `src/prompts/memory-enhanced.ts` | Include memory in prompts |
+| 2.39 | Build memory dashboard UI | `ui/src/components/memory/Dashboard.tsx` | Visualize memory |
+| 2.40 | Create memory browser UI | `ui/src/components/memory/Browser.tsx` | Browse stored memories |
+| 2.41 | Add memory search UI | `ui/src/components/memory/Search.tsx` | Search across memories |
+| 2.42 | Build retention settings UI | `ui/src/components/memory/Settings.tsx` | Configure retention |
+| 2.43 | Create knowledge graph viz | `ui/src/components/memory/KnowledgeGraph.tsx` | Visualize knowledge |
+| 2.44 | Add memory export/import | `src/memory/export.ts` | Export/import memories |
+| 2.45 | Create memory API endpoints | `src/server/routes/memory.ts` | REST API for memory |
+| 2.46 | Add memory metrics | `src/memory/metrics.ts` | Track memory usage |
+| 2.47 | Create memory CLI commands | `src/cli/memory.ts` | CLI memory management |
+| 2.48 | Write unit tests | `tests/unit/memory/*.test.ts` | 90% coverage |
+| 2.49 | Write integration tests | `tests/integration/memory.test.ts` | E2E memory flow |
+| 2.50 | Document memory system | `docs/memory-system.md` | Complete documentation |
 
-**Success Metric:** 100% of workflows have embeddings within 5s of insertion
+**Success Metric:** Recall latency <200ms, 90% enterprise adoption
 
 ---
 
-## Action 3: Configurator Agent
+## Action 3: Human-in-the-Loop Orchestration
 
-**Goal:** Complete the configurator agent for setting node parameters and credentials.
+**Goal:** Enterprise-grade human oversight with durable interrupts and approval chains
 
 **References:**
-- [n8n AI Workflow Builder Configurator](packages/@n8n/ai-workflow-builder.ee/src/subgraphs/configurator.subgraph.ts)
-- [Parameter Updater Chain](packages/@n8n/ai-workflow-builder.ee/src/chains/parameter-updater.ts)
+- [LangGraph HITL](https://langchain-ai.github.io/langgraphjs/how-tos/human_in_the_loop/)
+- [LangGraph Interrupt](https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/)
 
-### Subtasks
+### Subtasks (40 tasks)
 
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 3.1 | Define configurator agent prompt template | `src/graph/agents/configurator.prompt.ts` | Prompt includes node parameter context |
-| 3.2 | Create update_node_parameters tool | `src/tools/update-params.tool.ts` | Tool updates parameters in workflow JSON |
-| 3.3 | Create get_node_parameters tool | `src/tools/get-params.tool.ts` | Tool retrieves current parameter values |
-| 3.4 | Create assign_credentials tool | `src/tools/assign-credentials.tool.ts` | Tool assigns credentials from available list |
-| 3.5 | Implement configurator agent with tools | `src/graph/agents/configurator.ts` | Agent calls tools to configure nodes |
-| 3.6 | Add credential type detection from node type | `src/n8n/credentials.ts` | Detect required credential types per node |
-| 3.7 | Integrate configurator into main graph | `src/graph/index.ts` | Graph routes to configurator after builder |
-| 3.8 | Add validation for parameter types | `src/tools/validate-params.ts` | Reject invalid parameter values |
-| 3.9 | Test: full configuration flow | `tests/unit/configurator.test.ts` | Node parameters correctly set |
-| 3.10 | Test: credential assignment | `tests/unit/credentials.test.ts` | Credentials assigned from VarLock |
+| # | Task | Files | Success Criteria |
+|---|------|-------|------------------|
+| 3.1 | Define interrupt types | `src/hitl/types.ts` | Approval, Review, Input types |
+| 3.2 | Create interrupt point decorator | `src/hitl/interrupt.ts` | @interrupt decorator for nodes |
+| 3.3 | Build state serializer | `src/hitl/state/serializer.ts` | Serialize workflow state |
+| 3.4 | Implement state storage | `src/hitl/state/storage.ts` | Persist state to database |
+| 3.5 | Create state recovery | `src/hitl/state/recovery.ts` | Restore state on resume |
+| 3.6 | Add state versioning | `src/hitl/state/versions.ts` | Version state snapshots |
+| 3.7 | Build checkpoint manager | `src/hitl/checkpoints.ts` | Manage workflow checkpoints |
+| 3.8 | Create pending tasks table | `supabase/migrations/014_hitl_tasks.sql` | Database schema |
+| 3.9 | Implement task queue | `src/hitl/queue/tasks.ts` | Queue pending human tasks |
+| 3.10 | Add task assignment | `src/hitl/queue/assignment.ts` | Assign tasks to reviewers |
+| 3.11 | Create task notifications | `src/hitl/notifications.ts` | Notify assigned reviewers |
+| 3.12 | Build approval chain schema | `src/hitl/approval/schema.ts` | Multi-level approval |
+| 3.13 | Implement approval rules engine | `src/hitl/approval/rules.ts` | Conditional approval rules |
+| 3.14 | Create escalation logic | `src/hitl/approval/escalation.ts` | Auto-escalate on timeout |
+| 3.15 | Add parallel approval | `src/hitl/approval/parallel.ts` | Multiple simultaneous approvers |
+| 3.16 | Build consensus rules | `src/hitl/approval/consensus.ts` | Majority/unanimous rules |
+| 3.17 | Create SLA tracking | `src/hitl/sla/tracking.ts` | Track response times |
+| 3.18 | Implement SLA alerts | `src/hitl/sla/alerts.ts` | Alert on SLA breach |
+| 3.19 | Add SLA metrics | `src/hitl/sla/metrics.ts` | SLA compliance metrics |
+| 3.20 | Create review context builder | `src/hitl/review/context.ts` | Build review context |
+| 3.21 | Build review UI component | `ui/src/components/hitl/ReviewPanel.tsx` | Human review interface |
+| 3.22 | Create task list UI | `ui/src/components/hitl/TaskList.tsx` | Pending tasks view |
+| 3.23 | Add decision UI | `ui/src/components/hitl/DecisionForm.tsx` | Approve/reject/modify |
+| 3.24 | Build context display | `ui/src/components/hitl/ContextViewer.tsx` | Show workflow context |
+| 3.25 | Create diff viewer | `ui/src/components/hitl/DiffViewer.tsx` | Show proposed changes |
+| 3.26 | Add comments UI | `ui/src/components/hitl/Comments.tsx` | Reviewer comments |
+| 3.27 | Build approval chain viz | `ui/src/components/hitl/ApprovalChain.tsx` | Visualize approval flow |
+| 3.28 | Create mobile review UI | `ui/src/components/hitl/MobileReview.tsx` | Mobile-friendly review |
+| 3.29 | Implement audit logger | `src/hitl/audit/logger.ts` | Log all decisions |
+| 3.30 | Create audit trail schema | `supabase/migrations/015_hitl_audit.sql` | Audit table |
+| 3.31 | Build audit query API | `src/hitl/audit/query.ts` | Query audit logs |
+| 3.32 | Add compliance reports | `src/hitl/audit/reports.ts` | Generate compliance reports |
+| 3.33 | Create audit viewer UI | `ui/src/components/hitl/AuditViewer.tsx` | Browse audit logs |
+| 3.34 | Integrate with graph | `src/graph/hitl-integration.ts` | HITL nodes in graph |
+| 3.35 | Add resume handler | `src/hitl/resume.ts` | Handle workflow resume |
+| 3.36 | Create HITL API endpoints | `src/server/routes/hitl.ts` | REST API for HITL |
+| 3.37 | Add WebSocket notifications | `src/server/ws/hitl.ts` | Real-time updates |
+| 3.38 | Create HITL CLI commands | `src/cli/hitl.ts` | CLI task management |
+| 3.39 | Write unit tests | `tests/unit/hitl/*.test.ts` | 90% coverage |
+| 3.40 | Write integration tests | `tests/integration/hitl.test.ts` | E2E HITL flow |
 
-**Success Metric:** Workflows have all required parameters and credentials set
-
----
-
-## Action 4: React Chat UI with useStream
-
-**Goal:** Build a modern React chat interface using LangGraph's useStream hook.
-
-**References:**
-- [useStream React Hook](https://docs.langchain.com/langsmith/use-stream-react)
-- [LangGraph React Integration](https://langchain-ai.github.io/langgraphjs/cloud/how-tos/use_stream_react/)
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 4.1 | Create React app with Vite + TypeScript | `ui/package.json`, `ui/vite.config.ts`, `ui/tsconfig.json` | App builds and runs on localhost:3001 |
-| 4.2 | Install LangGraph SDK and configure useStream | `ui/package.json`, `ui/src/hooks/useWorkflowStream.ts` | Hook connects to backend stream |
-| 4.3 | Create ChatMessage component | `ui/src/components/ChatMessage.tsx` | Renders user/assistant messages with markdown |
-| 4.4 | Create ChatInput component with submit handling | `ui/src/components/ChatInput.tsx` | Text input with send button, Enter to submit |
-| 4.5 | Create ChatPanel component with message history | `ui/src/components/ChatPanel.tsx` | Scrollable message list with auto-scroll |
-| 4.6 | Add typing indicator during streaming | `ui/src/components/TypingIndicator.tsx` | Shows "Thinking..." during agent processing |
-| 4.7 | Create PhaseIndicator showing current agent | `ui/src/components/PhaseIndicator.tsx` | Shows: Discovery → Builder → Configurator |
-| 4.8 | Add WorkflowPreview component (JSON viewer) | `ui/src/components/WorkflowPreview.tsx` | Shows current workflow JSON with syntax highlighting |
-| 4.9 | Implement conversation branching UI | `ui/src/components/BranchSelector.tsx` | Allow selecting previous conversation states |
-| 4.10 | Add error handling and retry UI | `ui/src/components/ErrorMessage.tsx` | Shows error with retry button |
-| 4.11 | Create session management (new/load/save) | `ui/src/hooks/useSession.ts`, `ui/src/components/SessionControls.tsx` | Persist and restore chat sessions |
-| 4.12 | Add keyboard shortcuts (Cmd+Enter, Escape) | `ui/src/hooks/useKeyboardShortcuts.ts` | Submit with Cmd+Enter, cancel with Escape |
-| 4.13 | Style with Tailwind CSS | `ui/tailwind.config.js`, `ui/src/styles/globals.css` | Modern, responsive design |
-| 4.14 | Add dark mode support | `ui/src/hooks/useTheme.ts`, `ui/src/components/ThemeToggle.tsx` | Toggle between light/dark themes |
-| 4.15 | Integration test: full chat flow | `ui/tests/e2e/chat.spec.ts` | User can send message and receive streamed response |
-
-**Success Metric:** Users can chat and see real-time streaming responses
-
----
-
-## Action 5: Canvas Streaming Integration
-
-**Goal:** Stream node creation to n8n canvas in real-time as the agent builds.
-
-**References:**
-- [n8n useCanvasOperations](packages/frontend/editor-ui/src/app/composables/useCanvasOperations.ts)
-- [builder.store.ts applyWorkflowUpdate](packages/frontend/editor-ui/src/features/ai/assistant/builder.store.ts)
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 5.1 | Create WebSocket server for real-time updates | `src/server/websocket.ts` | WS server accepts connections on /ws |
-| 5.2 | Define streaming protocol (node_added, connection_added, etc.) | `src/types/streaming.ts` | Protocol types for all workflow events |
-| 5.3 | Emit events from builder agent as nodes are created | `src/graph/agents/builder.ts` | Agent emits node_added after each node |
-| 5.4 | Create useCanvasStream hook for React | `ui/src/hooks/useCanvasStream.ts` | Hook receives and processes WS events |
-| 5.5 | Animate node appearance on canvas | `ui/src/components/AnimatedNode.tsx` | Nodes fade in with animation |
-| 5.6 | Animate connection drawing | `ui/src/components/AnimatedConnection.tsx` | Connections draw progressively |
-| 5.7 | Add progress indicator for multi-node creation | `ui/src/components/BuildProgress.tsx` | Show "Creating node 3/5..." |
-| 5.8 | Handle reconnection and state recovery | `ui/src/hooks/useCanvasStream.ts` | Reconnect and replay missed events |
-| 5.9 | Create mini-canvas preview in chat | `ui/src/components/MiniCanvas.tsx` | Small canvas showing workflow being built |
-| 5.10 | Test: streaming performance with 20+ nodes | `tests/performance/streaming.test.ts` | All nodes appear within 2s of creation |
-
-**Success Metric:** Nodes appear on canvas within 100ms of agent creating them
-
----
-
-## Action 6: n8n Editor Integration
-
-**Goal:** Embed the workflow architect chat directly in n8n's editor UI.
-
-**References:**
-- [n8n Frontend Structure](packages/frontend/editor-ui/src/)
-- [AI Assistant Components](packages/frontend/editor-ui/src/features/ai/assistant/)
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 6.1 | Create WorkflowArchitect Vue component | `packages/frontend/editor-ui/src/features/workflow-architect/WorkflowArchitect.vue` | Component renders chat UI |
-| 6.2 | Add chat panel to editor sidebar | `packages/frontend/editor-ui/src/features/workflow-architect/WorkflowArchitectPanel.vue` | Panel appears in sidebar |
-| 6.3 | Create Pinia store for architect state | `packages/frontend/editor-ui/src/features/workflow-architect/architect.store.ts` | Store manages chat messages and workflow |
-| 6.4 | Connect to backend via SSE/WebSocket | `packages/frontend/editor-ui/src/features/workflow-architect/architect.api.ts` | API client handles streaming |
-| 6.5 | Integrate with useCanvasOperations for node creation | `packages/frontend/editor-ui/src/features/workflow-architect/useArchitectCanvas.ts` | Created nodes appear on actual n8n canvas |
-| 6.6 | Add feature flag for architect (aiArchitectEnabled) | `packages/frontend/editor-ui/src/app/stores/settings.store.ts` | Feature can be enabled/disabled |
-| 6.7 | Add keyboard shortcut to open architect (Cmd+Shift+A) | `packages/frontend/editor-ui/src/features/workflow-architect/useArchitectShortcuts.ts` | Shortcut opens architect panel |
-| 6.8 | Style to match n8n design system | `packages/frontend/editor-ui/src/features/workflow-architect/styles.scss` | Uses n8n CSS variables |
-| 6.9 | Add i18n translations | `packages/@n8n/i18n/src/locales/en.json` | All strings translated |
-| 6.10 | Create backend route for architect API | `packages/cli/src/controllers/workflow-architect.controller.ts` | REST + streaming endpoints |
-| 6.11 | Add backend service for architect | `packages/cli/src/services/workflow-architect.service.ts` | Service orchestrates agent graph |
-| 6.12 | Integration test: full flow in n8n editor | `packages/testing/playwright/tests/e2e/workflow-architect.spec.ts` | User can chat and workflow appears on canvas |
-
-**Success Metric:** Users can use architect from within n8n editor, nodes appear on canvas
-
----
-
-## Action 7: Advanced RAG (Hybrid Search + Reranking)
-
-**Goal:** Improve RAG quality with hybrid semantic+keyword search and reranking.
-
-**References:**
-- [Supabase Semantic Search](https://supabase.com/docs/guides/ai/semantic-search)
-- [Hybrid Search Best Practices](https://sparkco.ai/blog/mastering-supabase-vector-storage-a-2025-deep-dive)
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 7.1 | Add full-text search column with tsvector | `supabase/migrations/009_fulltext_search.sql` | tsvector column on workflow_examples |
-| 7.2 | Create GIN index for full-text search | `supabase/migrations/010_gin_index.sql` | Full-text queries <50ms |
-| 7.3 | Implement hybrid search combining vector + FTS | `src/rag/hybrid-search.ts` | Function combines both search methods |
-| 7.4 | Add Reciprocal Rank Fusion (RRF) for result merging | `src/rag/rrf-fusion.ts` | RRF combines vector and FTS rankings |
-| 7.5 | Implement cross-encoder reranker with Cohere | `src/rag/reranker.ts` | Rerank top-20 to top-5 |
-| 7.6 | Add query expansion with synonyms | `src/rag/query-expansion.ts` | Expand "email" → "email, smtp, sendgrid" |
-| 7.7 | Implement metadata filtering (category, techniques) | `src/rag/metadata-filter.ts` | Filter by category before search |
-| 7.8 | Add search analytics tracking | `src/rag/analytics.ts`, `supabase/migrations/011_search_analytics.sql` | Track queries and result clicks |
-| 7.9 | Create A/B test framework for search quality | `src/rag/ab-test.ts` | Compare search algorithms |
-| 7.10 | Test: search relevance metrics (MRR, NDCG) | `tests/quality/search-relevance.test.ts` | MRR > 0.7, NDCG > 0.8 |
-
-**Success Metric:** Search MRR (Mean Reciprocal Rank) > 0.7
-
----
-
-## Action 8: Multi-Model Enhancements
-
-**Goal:** Optimize model routing and add support for new models (Grok 4.2).
-
-**References:**
-- [Model Capabilities Research](docs/2025-12-26_RESEARCH_Meta-Workflow-AI-MCP-Frontier-Models.md)
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 8.1 | Add Grok 4.2 model configuration (placeholder) | `src/models/router.ts`, `src/models/grok.ts` | Model config ready for when API available |
-| 8.2 | Implement task-based model selection | `src/models/task-router.ts` | Different models for discovery vs builder |
-| 8.3 | Add cost tracking per request | `src/models/cost-tracker.ts` | Track input/output tokens and cost |
-| 8.4 | Implement model fallback with retry | `src/models/fallback.ts` | If primary fails, try fallback model |
-| 8.5 | Add latency monitoring per model | `src/models/latency-monitor.ts` | Track p50, p95, p99 latencies |
-| 8.6 | Create model selection dashboard | `ui/src/components/ModelDashboard.tsx` | Show cost, latency, success rates |
-| 8.7 | Implement dynamic routing based on load | `src/models/load-balancer.ts` | Route to faster model under load |
-| 8.8 | Add model-specific prompt optimization | `src/prompts/model-specific/*.ts` | Optimized prompts per model |
-| 8.9 | Test: model comparison benchmarks | `tests/benchmarks/model-comparison.test.ts` | Compare quality and speed |
-| 8.10 | Document model selection strategy | `docs/model-selection.md` | Clear docs on when each model is used |
-
-**Success Metric:** Optimal model selected for each task, <5% fallback rate
-
----
-
-## Action 9: Testing Suite
-
-**Goal:** Comprehensive tests for reliability and confidence in deployments.
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 9.1 | Unit tests for n8n client | `tests/unit/n8n-client.test.ts` | 100% coverage of client methods |
-| 9.2 | Unit tests for model router | `tests/unit/model-router.test.ts` | All routing paths tested |
-| 9.3 | Unit tests for RAG store | `tests/unit/rag-store.test.ts` | Add, search, delete tested |
-| 9.4 | Unit tests for each agent | `tests/unit/agents/*.test.ts` | Each agent tested in isolation |
-| 9.5 | Integration tests for agent graph | `tests/integration/graph.test.ts` | Full graph execution tested |
-| 9.6 | Integration tests for Supabase | `tests/integration/supabase.test.ts` | CRUD + search operations tested |
-| 9.7 | E2E tests for CLI | `tests/e2e/cli.test.ts` | Full CLI workflow tested |
-| 9.8 | E2E tests for web UI | `ui/tests/e2e/app.spec.ts` | Full UI workflow tested |
-| 9.9 | Performance tests | `tests/performance/*.test.ts` | Latency and throughput benchmarks |
-| 9.10 | Create CI pipeline with GitHub Actions | `.github/workflows/test.yml` | Tests run on every PR |
-| 9.11 | Add coverage reporting | `vitest.config.ts`, `.github/workflows/test.yml` | Coverage > 80% required |
-| 9.12 | Create test fixtures for workflows | `tests/fixtures/workflows/*.json` | Reusable test data |
-
-**Success Metric:** >80% code coverage, all tests pass on CI
-
----
-
-## Action 10: Production Hardening
-
-**Goal:** Make the system production-ready with proper error handling, observability, and security.
-
-### Subtasks
-
-| # | Task | Files (max 5) | Success Criteria |
-|---|------|---------------|------------------|
-| 10.1 | Add structured error types | `src/errors/index.ts` | Custom error classes with codes |
-| 10.2 | Implement error boundary in React UI | `ui/src/components/ErrorBoundary.tsx` | Graceful error handling in UI |
-| 10.3 | Add request rate limiting | `src/server/rate-limit.ts` | 100 req/min per user |
-| 10.4 | Implement request timeout handling | `src/server/timeout.ts` | 30s timeout with graceful cancel |
-| 10.5 | Add OpenTelemetry tracing | `src/observability/tracing.ts` | Traces for all agent operations |
-| 10.6 | Add Prometheus metrics | `src/observability/metrics.ts` | Request count, latency, errors |
-| 10.7 | Create health check endpoint | `src/server/health.ts` | /health returns status of all deps |
-| 10.8 | Add graceful shutdown | `src/server/shutdown.ts` | Clean shutdown on SIGTERM |
-| 10.9 | Implement request logging | `src/server/logging.ts` | Structured logs for all requests |
-| 10.10 | Add input sanitization | `src/security/sanitize.ts` | Prevent injection attacks |
-| 10.11 | Create Dockerfile and docker-compose | `Dockerfile`, `docker-compose.yml` | One-command deployment |
-| 10.12 | Add Kubernetes manifests | `k8s/*.yaml` | K8s deployment ready |
-| 10.13 | Create runbook for operations | `docs/runbook.md` | Common issues and solutions |
-| 10.14 | Security audit checklist | `docs/security-checklist.md` | All security measures documented |
-
-**Success Metric:** 99.9% uptime, <1% error rate, full observability
+**Success Metric:** 70% enterprise adoption, zero compliance violations
 
 ---
 
 ## Progress Tracking
 
-### Overall Status
+### Phase 3 Status
 
-| Phase | Actions | Status | Progress |
-|-------|---------|--------|----------|
-| Foundation | 1-3 | 🔄 In Progress | 0/32 |
-| Frontend | 4-6 | ⏳ Pending | 0/37 |
-| Quality | 7-9 | ⏳ Pending | 0/32 |
-| Production | 10 | ⏳ Pending | 0/14 |
-| **Total** | **10** | **🔄** | **0/115** |
+| Action | Tasks | Status | Progress |
+|--------|-------|--------|----------|
+| 1. MCP Integration | 40 | ⏳ Pending | 0/40 |
+| 2. Three-Tier Memory | 50 | ⏳ Pending | 0/50 |
+| 3. HITL Orchestration | 40 | ⏳ Pending | 0/40 |
+| **Total** | **130** | **⏳** | **0/130** |
 
 ### Key Milestones
 
 | Milestone | Target | Depends On |
 |-----------|--------|------------|
-| RAG on Supabase | Action 1 complete | - |
-| Chat UI working | Action 4 complete | - |
-| Full n8n integration | Action 6 complete | Actions 4, 5 |
-| Production deploy | Action 10 complete | All |
+| MCP Client Working | Action 1.1-1.10 | - |
+| Tool Discovery Live | Action 1.16-1.20 | 1.1-1.10 |
+| Memory API Ready | Action 2.1-2.35 | - |
+| HITL Core Complete | Action 3.1-3.20 | - |
+| Full Integration | All | All |
+
+---
+
+## Competitive Advantage
+
+After Phase 3 completion, Workflow Architect will be the **only platform** with:
+
+| Capability | Workflow Architect | Langflow | Flowise | Dify | n8n Core |
+|------------|-------------------|----------|---------|------|----------|
+| Native MCP | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Three-Tier Memory | ✅ | ❌ | ❌ | Partial | ❌ |
+| HITL Orchestration | ✅ | ❌ | ❌ | Basic | ❌ |
+| 10,000+ Tools | ✅ (via MCP) | ~100 | ~50 | ~200 | ~400 |
+| Enterprise Compliance | ✅ | ❌ | ❌ | Partial | ❌ |
 
 ---
 
 ## Getting Started
 
 ```bash
-# 1. Set up Supabase
-supabase link --project-ref your-project-ref
-supabase db push
+# 1. Ensure Phase 2 is complete
+pnpm test
 
-# 2. Configure environment
-cp .env.schema .env
-# Add SUPABASE_URL, SUPABASE_ANON_KEY
+# 2. Start Phase 3 development
+pnpm dev
 
-# 3. Run migrations
+# 3. MCP server setup (example)
+npx @modelcontextprotocol/create-server my-server
+
+# 4. Run memory migrations
 pnpm supabase:migrate
 
-# 4. Index workflows
-pnpm index-workflows
-
-# 5. Start development
-pnpm dev
+# 5. Enable HITL features
+export HITL_ENABLED=true
 ```
 
 ---
 
-## Sources
-
-- [Supabase AI & Vectors](https://supabase.com/docs/guides/ai)
-- [Supabase Automatic Embeddings](https://supabase.com/docs/guides/ai/automatic-embeddings)
-- [LangGraph useStream Hook](https://docs.langchain.com/langsmith/use-stream-react)
-- [Supabase Vercel Integration](https://vercel.com/marketplace/supabase)
-- [n8n Workflow Create API](https://docs.n8n.io/workflows/create/)
-
----
-
-*Last updated: December 28, 2025*
+*Last updated: February 2026*
